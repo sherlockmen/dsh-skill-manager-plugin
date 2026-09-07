@@ -14,18 +14,18 @@ export type TraceSource = 'production' | 'harness-native' | 'workbench-test'
 
 export interface SkillFiles {
   'SKILL.md': string
-  'manifest.yaml': string
-  'rules/decision-tree.yaml': string
   [path: string]: string
 }
 
 export interface SkillDraft {
+  /** Absent on older records means native package. */
+  format?: 'package' | 'markdown'
   skillId: string
   title: string
   description: string
   authority: SkillAuthority
   files: SkillFiles
-  source?: { kind: 'xmind' | 'archive' | 'copy' | 'blank'; id?: string; mindmapId?: string; hash?: string }
+  source?: { kind: 'xmind' | 'mindmap' | 'text' | 'archive' | 'copy' | 'blank'; id?: string; mindmapId?: string; hash?: string }
   draftVersion: number
   contentHash: string
   status: SkillStatus
@@ -122,6 +122,7 @@ export interface EvaluationCase {
 }
 
 export interface EvaluationBatch {
+  name?: string
   evaluationId: string
   skillId: string
   scenarioId?: string
@@ -186,6 +187,7 @@ export interface DashboardSnapshot {
     description: string
     items: Array<{
       id: string; title: string; detail: string; action: string; status?: string; scenarioCount?: number; skillId?: string
+      actionLabel?: string; nextStep?: string; scenarioId?: string; createEvaluation?: boolean
       majorIssue?: string; labeled?: number; minimumLabels?: number | null; minimumAccuracy?: number | null; productionAligned?: boolean
       thresholds?: Array<{ scenarioId: string; name: string; minimumLabels: number; minimumAccuracy: number }>
     }>
@@ -215,7 +217,7 @@ export const V1_METHODS = [
   'mindmapList', 'mindmapGet', 'mindmapCreate', 'mindmapImport', 'mindmapUpdate', 'mindmapGenerateCandidate', 'mindmapApplyCandidate',
   'scenarioList', 'scenarioGet', 'scenarioCreate', 'scenarioUpdate', 'scenarioSave', 'scenarioAttachSkill', 'scenarioRemoveSkill', 'scenarioAddSample',
   'excelRuleGet', 'excelRuleGenerate', 'excelRuleUploadSample', 'excelRuleAnalyze', 'excelRuleApplyDraft', 'excelRuleConfirm', 'excelRulePublish', 'excelRuleRegression',
-  'evaluationList', 'evaluationCreate', 'evaluationRun', 'evaluationStart', 'evaluationGet', 'evaluationStatus', 'evaluationCancel', 'evaluationRerunFailed', 'evaluationCaseGet', 'evaluationAnnotate', 'evaluationMetrics', 'evaluationOptimize', 'evaluationSuggestions', 'evaluationApplySuggestion', 'jobGet',
+  'evaluationPreviewInput', 'evaluationRename', 'evaluationList', 'evaluationCreate', 'evaluationRun', 'evaluationStart', 'evaluationGet', 'evaluationStatus', 'evaluationCancel', 'evaluationRerunFailed', 'evaluationCaseGet', 'evaluationAnnotate', 'evaluationMetrics', 'evaluationOptimize', 'evaluationSuggestions', 'evaluationApplySuggestion', 'jobGet',
   'releaseCheck', 'releasePublish', 'releaseList', 'releaseGet', 'releaseRollback', 'runtimeStatus',
   'traceIngest', 'traceList', 'traceGet', 'traceRetentionPreview', 'traceProtect', 'traceRetain', 'traceClear', 'traceCleanup',
   'settingsGet', 'settingsSave', 'settingsUpdate', 'settingsHealth', 'settingsBackup', 'settingsRestore', 'settingsAudit', 'settingsAuditExport',
@@ -280,7 +282,7 @@ export function createV1Descriptors(packageId: string): RpcMethodDescriptor[] {
   const operationSchema = Object.freeze({ parse(value: unknown) { if (typeof value !== 'string' || value.trim().length === 0 || value.length > 200) throw new TypeError('operationId must be a non-empty string of at most 200 characters'); return value.trim() } })
   const parameter = (name: string, typeSymbol: string, schema: { parse(value: unknown): unknown } = anySchema, acceptsUndefined = false) => ({ name, wire: name, source: 'json' as const, ...(acceptsUndefined ? { acceptsUndefined: true as const } : {}), codec: { mode: 'strict' as const, typeSymbol, schema } })
   const noArgs = new Set(['dashboardGet', 'xmindSample', 'traceSample', 'mindmapList', 'traceRetentionPreview', 'settingsGet', 'settingsHealth'])
-  const optionalRequest = new Set(['skillList', 'scenarioList', 'evaluationList', 'traceList', 'settingsAudit', 'settingsAuditExport'])
+  const optionalRequest = new Set(['evaluationPreviewInput', 'skillList', 'scenarioList', 'evaluationList', 'traceList', 'settingsAudit', 'settingsAuditExport'])
   const optionalIdQueries = new Set(['releaseList', 'runtimeStatus'])
   const optionalRequestMutations = new Set(['settingsBackup'])
   const idQueries = new Set([

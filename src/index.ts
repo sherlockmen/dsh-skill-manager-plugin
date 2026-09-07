@@ -9,7 +9,7 @@ const direct = Object.freeze({ kind: 'direct' as const })
 const legacyInvocation = (method: string, parameters: unknown[] = [], cancellation = false) => Object.freeze({ id: `${PACKAGE_ID}#skillManager/${method}`, service: 'skillManager' as const, namespace: 'skillManager' as const, method, invocation: direct, parameters, ...(cancellation ? { cancellation: Object.freeze({ parameter: 'signal' as const }) } : {}), result: legacyCodec })
 
 export const name = PACKAGE_ID
-export const version = '1.0.0'
+export const version = '1.0.5'
 // Register the strict Host descriptors only after the registry exists. Without
 // this dependency an early startup silently fell back to SRC reflection.
 export const inject: string[] = ['typert']

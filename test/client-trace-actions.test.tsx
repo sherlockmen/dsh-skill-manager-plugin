@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { chooseOption } from './select-helpers.js'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,7 +39,7 @@ async function click(text: string) {
 async function filterModels() {
   await click('顺序列表')
   const select = host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!
-  await act(async () => { select.value = 'model'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  await chooseOption(select, 'model')
 }
 afterEach(async () => {
   if (root) await act(async () => root!.unmount())
@@ -110,14 +111,14 @@ describe('real Trace page actions', () => {
     expect(graph.offsetWidth * scale).toBeLessThanOrEqual(320 - 48)
     expect(graph.offsetHeight * scale).toBeLessThanOrEqual(410 - 48)
     expect(scroll.scrollLeft).toBe(0); expect(scroll.scrollTop).toBe(0)
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.value).toBe('model')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.textContent).toBe('model')
     expect(host.querySelectorAll('.gate-trace-topology .trace-node')).toHaveLength(2)
     expect(host.querySelector('.detail-head h2')?.textContent).toBe('model.second')
     await click('model.first')
     expect(host.querySelector('.detail-head h2')?.textContent).toBe('model.first')
     await click('原始尺寸')
     expect(host.querySelector<HTMLElement>('.gate-trace-topology')!.style.transform).toBe('scale(1)')
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.value).toBe('model')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.textContent).toBe('model')
   })
 
   it('resets hidden node filters when switching to a different Trace', async () => {
@@ -125,7 +126,7 @@ describe('real Trace page actions', () => {
     await filterModels()
     await click('返回 Trace 列表')
     await click('Request B')
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.value).toBe('all')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="节点类型筛选"]')!.textContent).toBe('全部类型')
     expect(host.querySelectorAll('.gate-trace-topology .trace-node')).toHaveLength(1)
     expect(host.querySelector('.gate-trace-topology .trace-node strong')?.textContent).toBe('Request B')
   })

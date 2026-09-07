@@ -21,3 +21,7 @@ it('detects missing targets, loops and unreachable nodes using actual references
   expect(codes).toEqual(expect.arrayContaining(['skill/tree-cycle', 'skill/tree-unreachable', 'skill/tree-target-missing']))
   expect(inspectNativeYaml({ 'rules/decision-tree.yaml': 'root: start\nnodes:\n  start:\n    result: pass' })).toEqual([])
 })
+
+it('rejects model-generated branch maps that the native tree editor cannot interpret', () => {
+  expect(inspectNativeYaml({ 'rules/decision-tree.yaml': 'root: start\nnodes:\n  start:\n    branches:\n      when:\n        - result: review\n' })).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'skill/tree-branches-invalid' })]))
+})

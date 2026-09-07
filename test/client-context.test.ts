@@ -11,7 +11,7 @@ function installDomStub(): void {
   globalThis.document = {
     querySelector: () => null,
     querySelectorAll: () => [],
-    createElement: () => ({ dataset: {}, style: {}, classList: { add: noop, remove: noop } }),
+    createElement: () => ({ setAttribute: noop, remove: noop, dataset: {}, style: {}, classList: { add: noop, remove: noop } }),
     head: { appendChild: noop },
     documentElement: { classList, style, dataset: {} },
     body: { classList, dataset: {}, appendChild: noop, removeAttribute: noop },

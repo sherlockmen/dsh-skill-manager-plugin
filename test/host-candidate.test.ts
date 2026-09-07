@@ -46,6 +46,23 @@ describe('real Host model candidate flow', () => {
   })
   afterEach(async () => { vi.useRealTimers(); service.dispose(); await rm(dataDir, { recursive: true, force: true }) })
 
+  it.each(['mindmap', 'text'])('creates a %s source, edits branches and generates a Markdown-only candidate', async kind => {
+    const { skill } = await service.skillCreate('new-source', { title: '规则', format: 'markdown', sourceInput: { kind, text: '金额超过200升级' } })
+    expect(Object.keys(skill.files)).toEqual(['SKILL.md'])
+    const mapId = skill.source.mindmapId
+    const nodes = [{ id: 'root', parentId: null, title: '金额判断' }, { id: 'branch', parentId: 'root', title: '金额超过200升级' }]
+    await service.mindmapUpdate('edit-tree', { mindmapId: mapId, nodes })
+    await expect(service.mindmapUpdate('cycle', { mindmapId: mapId, nodes: [{ ...nodes[0], parentId: 'branch' }, nodes[1]] })).rejects.toThrow()
+    expect((await service.mindmapGet(mapId)).mindmap.nodes).toEqual(nodes)
+    response = { changes: [{ path: 'SKILL.md', before: skill.files['SKILL.md'], after: '# 规则\n金额超过200升级', reason: '来自来源分支' }] }
+    const { candidate } = await service.mindmapGenerateCandidate('generate-md', { mindmapId: mapId, skillId: skill.skillId })
+    expect(JSON.stringify(requests)).toContain('独立 Markdown Skill')
+    const applied = await service.mindmapApplyCandidate('apply-md', { candidateId: candidate.candidateId, skillId: skill.skillId, selected: [0], expectedHash: skill.contentHash })
+    expect((await service.skillGet(skill.skillId)).skill.files).toEqual({ 'SKILL.md': '# 规则\n金额超过200升级' })
+    response = { changes: [{ path: 'manifest.yaml', before: '', after: 'name: invalid', reason: 'invalid' }] }
+    await expect(service.mindmapGenerateCandidate('bad-md', { mindmapId: mapId, skillId: skill.skillId })).rejects.toThrow('Markdown')
+  })
+
   async function source() {
     const { skill } = await service.skillCreate('skill', { title: '真实规则', files: { 'SKILL.md': '# 真实规则\n金额超过100才升级。' } })
     const { mindmap } = await service.mindmapCreate('map', { title: '来源', nodes: [{ id: 'root', parentId: null, title: '金额超过200才升级' }] })
@@ -65,6 +82,38 @@ describe('real Host model candidate flow', () => {
     expect(saved.skill.files['manifest.yaml']).toBe(skill.files['manifest.yaml'])
     expect(saved.skill.contentHash).not.toBe(skill.contentHash)
     expect((await service.mindmapApplyCandidate('apply', { candidateId: generated.candidate.candidateId, skillId: skill.skillId, selected: [0] })).replayed).toBe(true)
+  })
+
+  it('repairs unreachable generated nodes before returning a reviewable candidate', async () => {
+    const { skill, mindmap } = await source()
+    const path = 'rules/decision-tree.yaml'
+    response = { changes: [{ path, before: skill.files[path], after: 'root: start\nnodes:\n  start:\n    branches: [{otherwise: output}]\n  output:\n    branches: [{otherwise: end}]\n  end:\n    branches: [{otherwise: end}]', reason: '固定输出' }] }
+    pauseStream = async () => { if (requests.length === 2) response = { changes: [{ path, before: skill.files[path], after: 'root: start\nnodes:\n  start:\n    result: 鼠鼠大王', reason: '固定结果直接终止' }] } }
+    const { candidate, status } = await service.mindmapGenerateCandidate('repair-tree', { mindmapId: mindmap.mindmapId, skillId: skill.skillId })
+    expect(requests).toHaveLength(2)
+    expect(JSON.stringify(requests[1])).toContain('从根节点不可达')
+    expect(status).toBe('ready'); expect(candidate.validation.errors).toEqual([])
+    expect((await service.skillGet(skill.skillId)).skill.contentHash).toBe(skill.contentHash)
+    await service.mindmapApplyCandidate('apply-repaired', { candidateId: candidate.candidateId, skillId: skill.skillId, selected: [0] })
+    expect((await service.skillValidate(skill.skillId)).status).toBe('passed')
+  })
+
+  it('retains a blocked candidate with exact errors when repair fails, then permits explicit repair', async () => {
+    const { skill, mindmap } = await source()
+    const path = 'rules/decision-tree.yaml'
+    response = { changes: [{ path, before: skill.files[path], after: 'root: start\nnodes:\n  start: {next: missing}' }] }
+    pauseStream = async () => { if (requests.length === 2) failure = true }
+    const generated = await service.mindmapGenerateCandidate('bad-tree', { mindmapId: mindmap.mindmapId, skillId: skill.skillId })
+    expect(generated.status).toBe('blocked')
+    expect(generated.candidate.repairMessage).toContain('原候选已保留')
+    await expect(service.mindmapApplyCandidate('bad-apply', { candidateId: generated.candidate.candidateId, skillId: skill.skillId, selected: [0] })).rejects.toThrow('不存在的 missing')
+    expect((await service.skillGet(skill.skillId)).skill.contentHash).toBe(skill.contentHash)
+    failure = false; pauseStream = undefined
+    response = { changes: [{ path, before: skill.files[path], after: 'root: start\nnodes:\n  start: {result: 鼠鼠大王}' }] }
+    const repaired = await service.mindmapGenerateCandidate('manual-repair', { mindmapId: mindmap.mindmapId, skillId: skill.skillId, repairCandidateId: generated.candidate.candidateId })
+    expect(repaired.candidate.validation.status).toBe('passed')
+    expect(JSON.stringify(requests.at(-1))).toContain('待修复候选')
+    await expect(service.mindmapGenerateCandidate('forged-repair', { mindmapId: mindmap.mindmapId, skillId: skill.skillId, repairCandidateId: 'unknown' })).rejects.toMatchObject({ code: 'candidate/stale' })
   })
 
   it('rejects stale drafts and invalid or empty selections without writing', async () => {

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { chooseOption } from './select-helpers.js'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +9,7 @@ import { readPackageYaml } from '../src/domain/native-package.js'
 import type { SkillDraft } from '../src/contracts/index.js'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) })
 let root: Root | undefined
 let host: HTMLDivElement
 async function mount(element: React.ReactNode) {
@@ -108,10 +110,13 @@ describe('Skill editor integration and version identity', () => {
     const dirty = vi.fn(), notice = vi.fn()
     const props = { api, skill, onChanged: vi.fn(), onNotice: notice, onNavigate: vi.fn(), onDirtyChange: dirty, onCopy: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() }
     await mount(<SkillEditor {...props} />)
+    await click('SKILL.md')
     expect(host.querySelector('.editor-foot')?.textContent).toContain('3 行')
     expect(host.querySelector('[data-source-node="root"] > ul > [data-source-node="child"] > ul > [data-source-node="leaf"]')).toBeTruthy()
     await click('来源子节点')
-    await input('.source-editor input', '尚未保存的源节点')
+    await input('textarea[aria-label="节点内容"]', '尚未保存的源节点')
+    await click('概览'); await click('编辑')
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="节点内容"]')!.value).toBe('尚未保存的源节点')
     expect(host.querySelector<HTMLButtonElement>('[data-source-node="leaf"] > button')!.disabled).toBe(true)
     await click('manifest.yaml')
     await input('input[aria-label="Manifest name"]', '表单修改')
@@ -122,10 +127,10 @@ describe('Skill editor integration and version identity', () => {
     expect(dirty.mock.lastCall).toEqual([true])
     await act(async () => { root!.render(<SkillEditor {...props} skill={{ ...skill, updatedAt: '2026-09-07T00:01:00Z' }} />) })
     await click('来源子节点')
-    expect(host.querySelector<HTMLInputElement>('.source-editor input')!.value).toBe('尚未保存的源节点')
+    expect(host.querySelector<HTMLInputElement>('textarea[aria-label="节点内容"]')!.value).toBe('尚未保存的源节点')
     expect(dirty.mock.lastCall).toEqual([true])
-    await click('保存来源节点')
-    expect(api.mindmapUpdate).toHaveBeenCalledWith(expect.any(String), { mindmapId: 'map-1', nodeId: 'child', title: '尚未保存的源节点' }, undefined)
+    await click('保存来源')
+    expect(api.mindmapUpdate).toHaveBeenCalledWith(expect.any(String), { mindmapId: 'map-1', nodes: [nodes[0], { ...nodes[1], title: '尚未保存的源节点' }, nodes[2]] }, undefined)
     expect(dirty.mock.lastCall).toEqual([false])
   })
 
@@ -143,7 +148,7 @@ describe('Skill editor integration and version identity', () => {
     expect(host.textContent).toContain('运行端加载：未知')
     expect(host.textContent).not.toContain('运行端加载：ready')
     await click('回滚到 v1')
-    await input('select', 'B')
+    await chooseOption(host.querySelector<HTMLElement>('[role="combobox"]')!, /^v2 ·/)
     expect(host.textContent).toContain('正在读取所选版本')
     expect(host.textContent).not.toContain('version A')
     expect([...host.querySelectorAll('button')].some(button => button.textContent === '切换生效版本')).toBe(false)

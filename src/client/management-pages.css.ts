@@ -20,7 +20,7 @@ export const MANAGEMENT_PAGES_CSS: string = `
 .management-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; padding: 20px 24px; }
 .management-field { display: grid; gap: 6px; min-width: 0; color: #5e6872; font-size: 12px; }
 .management-field.wide { grid-column: 1 / -1; }
-.management-page input:not([type=checkbox]), .management-page select, .management-page textarea { min-width: 0; min-height: 34px; border: 1px solid #dcd9d1; border-radius: 4px; background: #fff; color: #30363b; font: 12px/1.5 inherit; padding: 6px 9px; }
+.management-page input:not([type=checkbox]), .management-page select, .management-page textarea { min-width: 0; min-height: 34px; border: 1px solid #dcd9d1; border-radius: 4px; background: #fff; color: #30363b; font-family:inherit; font-size:12px; line-height:1.5; padding: 6px 9px; }
 .management-page textarea { resize: vertical; }
 .management-page input:focus-visible, .management-page select:focus-visible, .management-page textarea:focus-visible, .management-page button:focus-visible, .management-page summary:focus-visible { outline: 2px solid #2267c7; outline-offset: 2px; }
 .management-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

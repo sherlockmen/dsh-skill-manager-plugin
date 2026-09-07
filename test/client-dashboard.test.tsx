@@ -29,7 +29,7 @@ it('renders each real quality state and threshold without painting a 0% row read
   }
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   await act(async () => { root!.render(<SkillManagerApp api={api} onExit={vi.fn()} />) })
-  const rows = [...host.querySelectorAll('.quality-table tbody tr')]
+  const rows = [...host.querySelectorAll('.quality-table tbody')]
   expect(rows[0].textContent).toContain('0% / 95%')
   expect(rows[0].textContent).toContain('有效标注 1 / 5')
   expect(rows[0].textContent).toContain('规则分支')
@@ -39,7 +39,7 @@ it('renders each real quality state and threshold without painting a 0% row read
   const workSummary = host.querySelector('[aria-labelledby="attention-title"] .section-head .sm-pill')!
   expect(workSummary.textContent).toBe('需处理')
   expect(workSummary.textContent).not.toBe('待运行')
-  expect(host.querySelector('.attention-reason .sm-pill')?.textContent).toBe('门槛未配置')
+  expect(host.querySelector('.attention-reason .sm-pill')?.textContent).toBe('待设置发布要求')
   expect(host.querySelectorAll('.region-grid > .region')).toHaveLength(4)
 })
 
@@ -77,4 +77,15 @@ it('preserves the production window and exact rollback release in Dashboard dril
   expect(rollback.textContent).toContain('运行端加载未知')
   await act(async () => { rollback.click() })
   expect(onNavigate).toHaveBeenLastCalledWith('skills', { skillId: 'skill-one', releaseId: 'older-release', skillTab: 'versions' })
+})
+
+it('routes missing publish requirements to the linked scenario with the exact Skill context', async () => {
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  const navigate = vi.fn()
+  const data = { generatedAt: '2026-09-07', counts: { activeSkills: 1 }, sections: [{ id: 'work', items: [{ id: 'eval', title: '电仪', detail: '发布要求尚未设置', nextStep: '填写最低准确率并关联 Skill', action: 'scenario', scenarioId: 'scenario', skillId: 'skill', actionLabel: '设置发布要求', status: 'unconfigured' }] }] }
+  const api = { dashboardGet: async () => data, releaseList: async () => ({ changes: [] }) }
+  await act(async () => root!.render(<DashboardPage api={api} refresh={0} onNavigate={navigate} onChanged={vi.fn()} onNotice={vi.fn()} />))
+  expect(host.textContent).toContain('填写最低准确率并关联 Skill')
+  await act(async () => host.querySelector<HTMLButtonElement>('.attention-item')!.click())
+  expect(navigate).toHaveBeenCalledWith('scenarios', { scenarioId: 'scenario', skillId: 'skill' })
 })

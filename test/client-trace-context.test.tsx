@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { chooseOption } from './select-helpers.js'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -50,11 +51,11 @@ describe('Trace object continuity', () => {
     const from = '2026-09-06T04:00:00.000Z', until = '2026-09-07T04:00:00.000Z'
     await mount(<TracesPage api={service} refresh={0} initialSource="production" initialFrom={from} initialUntil={until} onChanged={vi.fn()} onNavigate={vi.fn()} onNotice={vi.fn()} />)
     expect(service.traceList).toHaveBeenLastCalledWith({ limit: 50, source: 'production', from, until })
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.value).toBe('production')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.textContent).toBe('生产')
     expect(host.querySelector('.trace-time-filter')?.textContent).toContain('时间范围')
     await act(async () => { host.querySelectorAll<HTMLButtonElement>('.trace-list-item')[0].click() })
     await click('返回 Trace 列表')
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.value).toBe('production')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.textContent).toBe('生产')
     expect(host.querySelector('.trace-time-filter')).not.toBeNull()
     await click('清除时间范围')
     expect(service.traceList).toHaveBeenLastCalledWith({ limit: 50, source: 'production' })
@@ -66,6 +67,7 @@ describe('Trace object continuity', () => {
     window.history.replaceState({}, '', '/#/evaluations')
     const service = api()
     await mount(<SkillManagerApp api={service} onExit={vi.fn()} />)
+    await act(async () => { host.querySelector<HTMLButtonElement>('.batch-option')!.click() })
     await act(async () => { host.querySelectorAll<HTMLButtonElement>('.case-button')[1].click() })
     expect(host.querySelector('#case-title')?.textContent).toBe('case-second')
     await click('打开顺序摘要')
@@ -88,11 +90,11 @@ describe('Trace object continuity', () => {
     const service = api()
     await mount(<TracesPage api={service} refresh={0} onChanged={vi.fn()} onNavigate={vi.fn()} onNotice={vi.fn()} />)
     const source = host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')!
-    await act(async () => { source.value = 'workbench-test'; source.dispatchEvent(new Event('change', { bubbles: true })) })
+    await chooseOption(source, '测试')
     await act(async () => { host.querySelectorAll<HTMLButtonElement>('.trace-list-item')[1].click() })
     expect(host.querySelector('.trace-ledger')).toBeNull()
     await click('返回 Trace 列表')
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.value).toBe('workbench-test')
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="来源筛选"]')?.textContent).toBe('测试')
     expect(service.traceList).toHaveBeenLastCalledWith({ limit: 50, source: 'workbench-test' })
   })
 

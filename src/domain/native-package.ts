@@ -43,6 +43,7 @@ export function inspectNativeYaml(files: Record<string, string>): { path: string
     for (const [id, node] of Object.entries(nodes)) {
       if (!node || typeof node !== 'object' || Array.isArray(node)) { errors.push({ path, code: 'skill/tree-node-invalid', message: `节点 ${id} 必须是映射。` }); continue }
       const record = node as Record<string, unknown>
+      if (record.branches !== undefined && !Array.isArray(record.branches)) errors.push({ path, code: 'skill/tree-branches-invalid', message: `节点 ${id} 的 branches 必须是分支数组。` })
       const targets: string[] = []
       if (typeof record.next === 'string') targets.push(record.next)
       if (Array.isArray(record.branches)) for (const branch of record.branches) if (branch && typeof branch === 'object' && typeof branch.next === 'string') targets.push(branch.next)

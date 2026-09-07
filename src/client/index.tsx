@@ -1,4 +1,8 @@
+import { EvaluationCreate, evaluationName } from './evaluation-create.js'
+import { WorkbenchSelect } from './select.js'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ResizableRail } from './resizable-rail.js'
+import { ActionButton } from './action-button.js'
 import { createRoot } from 'react-dom/client'
 import type {
   DashboardSnapshot, EvaluationBatch, EvaluationCase, Scenario, SkillDraft,
@@ -22,7 +26,7 @@ type NavId = 'dashboard' | 'skills' | 'evaluations' | 'traces' | 'scenarios' | '
 type WorkbenchFocus = {
   skillId?: string; evaluationId?: string; caseId?: string; traceId?: string
   traceSource?: string; traceFrom?: string; traceTo?: string
-  releaseId?: string; skillTab?: 'versions'
+  releaseId?: string; skillTab?: 'versions'; scenarioId?: string; createEvaluation?: boolean
 }
 
 const NAV_ITEMS: Array<{ id: NavId; label: string; glyph: string }> = [
@@ -210,9 +214,14 @@ export async function apply(ctx: AnyRecord): Promise<() => Promise<void>> {
   let disposeRoot: (() => void) | undefined
   let disposeUi: (() => Promise<void>) | undefined
   let cleanupPromise: Promise<void> | undefined
+  let launcher: HTMLButtonElement | undefined
+  let disposeEntry: (() => void) | undefined
+  let hasPresetEntry = false
   const cleanup = (): Promise<void> => {
     if (cleanupPromise) return cleanupPromise
     cleanupPromise = (async () => {
+      launcher?.remove(); launcher = undefined
+      disposeEntry?.(); disposeEntry = undefined
       const rootDisposer = disposeRoot
       disposeRoot = undefined
       try { requestNativeExit(ctx, rootDisposer) } catch {}
@@ -236,10 +245,24 @@ export async function apply(ctx: AnyRecord): Promise<() => Promise<void>> {
       // shell and every action is disabled.
       disposeRemote = await remote.$mount(skillManagerRemote)
     }
-    const leave = () => { void cleanup() }
+    const leave = () => {
+      const unmount = disposeRoot; disposeRoot = undefined
+      unmount?.(); cleanupDom()
+      if (typeof document === 'undefined' || hasPresetEntry) return
+      launcher = document.createElement('button')
+      launcher.type = 'button'; launcher.textContent = '打开 Skill Manager'
+      launcher.setAttribute('aria-label', '打开 Skill Manager 工作台')
+      launcher.dataset.skillManagerLauncher = 'true'
+      launcher.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:1000;padding:12px 18px;border:1px solid #1c57aa;border-radius:6px;background:#2267c7;color:white;font:500 14px system-ui;cursor:pointer;box-shadow:0 4px 16px #0002'
+      launcher.onclick = openWorkbench
+      document.body.appendChild(launcher)
+    }
+    let uiScope = ctx
+    const openWorkbench = () => { if (disposeRoot) return; launcher?.remove(); launcher = undefined; installStyle(); applyDesktopSafeArea(ctx); registerUi(uiScope) }
     installStyle()
     applyDesktopSafeArea(ctx)
     const registerUi = (scope: AnyRecord): void => {
+      uiScope = scope
       const api = resolveRemote(scope)
       const renderProps = { api, onExit: leave }
       if (scope?.slots?.register) {
@@ -270,11 +293,25 @@ export async function apply(ctx: AnyRecord): Promise<() => Promise<void>> {
       // UI using only the facade's declared `slots` and `remote` services.
       registerUi(ctx)
     }
+    if (typeof uiScope?.slots?.inject === 'function') {
+      disposeEntry = uiScope.slots.inject('settings.agentPreset.custom.actions', () => {
+        hasPresetEntry = true
+        launcher?.remove(); launcher = undefined
+        const unregister = uiScope.slots.register({ name: 'settings.agentPreset.custom.actions', id: 'skill-manager', order: 10, inject: () => ({ open: openWorkbench }) }, SkillManagerPresetEntry)
+        return () => { hasPresetEntry = false; unregister() }
+      })
+    }
     return cleanup
   } catch (error) {
     await cleanup()
     throw error
   }
+}
+
+function SkillManagerPresetEntry({ close, open }: { close: () => void; open: () => void }) {
+  return <button type="button" aria-label="打开 Skill Manager 工作台" onClick={() => { close(); open() }} style={{ width: '100%', marginTop: 12, padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 16, border: '1px solid var(--dsw-alias-border-l4, #dedede)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-3, #fff)', color: 'var(--dsw-alias-label-primary, #202124)', textAlign: 'left', cursor: 'pointer', font: 'inherit' }}>
+    <span style={{ flex: 1 }}><strong style={{ display: 'block', fontSize: 14 }}>Skill Manager</strong><span style={{ display: 'block', marginTop: 6, fontSize: 12, opacity: .7 }}>管理 Skill、编辑思维导图与运行测评</span></span><span style={{ fontSize: 13 }}>打开工作台 →</span>
+  </button>
 }
 
 function SkillManagerRoot(props: { api?: RemoteApi; onExit: () => void }): React.ReactElement {
@@ -290,7 +327,10 @@ export function SkillManagerApp({ api, onExit }: { api?: RemoteApi; onExit: () =
   const [focus, setFocus] = useState<WorkbenchFocus>({})
   const [pendingFocus, setPendingFocus] = useState<typeof focus>({})
   const [route, navigate] = useHashRoute(next => { if (hasUnsaved) { setPendingRoute(next); setPendingFocus({}); return false } return true })
+  const mainRef = useRef<HTMLElement>(null)
+  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0 }, [route])
   const connection = useRemoteQuery<AnyRecord>(api, 'settingsHealth', [], {})
+  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(undefined), 6000); return () => window.clearTimeout(timer) }, [notice])
   useEffect(() => { if (!api) return; const timer = window.setInterval(connection.reload, 15000); return () => window.clearInterval(timer) }, [api])
   const connectionLabel = !api ? '未连接 Harness' : connection.error ? '连接失败' : !connection.data.status ? '连接中' : connection.data.status === 'healthy' ? '管理服务正常' : '服务需关注'
   useEffect(() => {
@@ -306,15 +346,15 @@ export function SkillManagerApp({ api, onExit }: { api?: RemoteApi; onExit: () =
   const requestExit = () => { if (hasUnsaved) setConfirmExit(true); else onExit() }
   return <div className="sm-app" data-sm-owner="skill-manager">
     <Sidebar connectionLabel={connectionLabel} route={route} onNavigate={go} onExit={requestExit} />
-    <main className="sm-main">
+    <main ref={mainRef} className="sm-main">
       <Topbar connectionLabel={connectionLabel} connected={Boolean(connection.data.status) && !connection.error} route={route} api={api} />
       {notice ? <div className="sm-toast" role="status">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice(undefined)}>×</button></div> : null}
       {!api ? <ConnectionBanner /> : connection.error ? <InlineError message={connection.error} onRetry={connection.reload} /> : null}
       {route === 'dashboard' ? <DashboardPage api={api} refresh={refresh} onNavigate={go} onChanged={bump} onNotice={setNotice} /> : null}
       {route === 'skills' ? <SkillsPage initialSkillId={focus.skillId} initialReleaseId={focus.releaseId} initialTab={focus.skillTab} api={api} refresh={refresh} onChanged={bump} onNavigate={go} onNotice={setNotice} onDirtyChange={setHasUnsaved} /> : null}
-      {route === 'evaluations' ? <EvaluationsPage onDirtyChange={setHasUnsaved} initialSkillId={focus.skillId} initialEvaluationId={focus.evaluationId} initialCaseId={focus.caseId} api={api} refresh={refresh} onChanged={bump} onNavigate={go} onNotice={setNotice} /> : null}
+      {route === 'evaluations' ? <EvaluationsPage initialCreate={focus.createEvaluation} onDirtyChange={setHasUnsaved} initialSkillId={focus.skillId} initialEvaluationId={focus.evaluationId} initialCaseId={focus.caseId} api={api} refresh={refresh} onChanged={bump} onNavigate={go} onNotice={setNotice} /> : null}
       {route === 'traces' ? <TracesPage initialSkillId={focus.skillId} initialTraceId={focus.traceId} initialEvaluationId={focus.evaluationId} initialCaseId={focus.caseId} initialSource={focus.traceSource} initialFrom={focus.traceFrom} initialUntil={focus.traceTo} api={api} refresh={refresh} onChanged={bump} onNavigate={go} onNotice={setNotice} /> : null}
-      {route === 'scenarios' ? <ScenariosPage onDirtyChange={setHasUnsaved} api={api} refresh={refresh} onChanged={bump} onNotice={setNotice} /> : null}
+      {route === 'scenarios' ? <ScenariosPage initialScenarioId={focus.scenarioId} initialSkillId={focus.skillId} onDirtyChange={setHasUnsaved} api={api} refresh={refresh} onChanged={bump} onNotice={setNotice} /> : null}
       {route === 'settings' ? <SettingsPage onDirtyChange={setHasUnsaved} api={api} onExit={requestExit} onNotice={setNotice} /> : null}
     </main>
     {confirmExit || pendingRoute ? <div className="sm-modal-backdrop"><div className="sm-modal" role="dialog" aria-modal="true" aria-labelledby="sm-exit-title"><h2 id="sm-exit-title">还有未保存修改</h2><p>离开将丢弃尚未保存的编辑内容。已保存草稿不会受影响。</p><div><Button onClick={() => { setConfirmExit(false); setPendingRoute(undefined) }}>继续编辑</Button><Button variant="danger" onClick={() => { setConfirmExit(false); setHasUnsaved(false); if (pendingRoute) { setFocus(pendingFocus); navigate(pendingRoute); setPendingRoute(undefined) } else onExit() }}>放弃未保存更改</Button></div></div></div> : null}
@@ -344,12 +384,12 @@ function PageIntro({ eyebrow, title, description, actions }: { eyebrow?: string;
   return <header className="gate-page-head"><div className="gate-title-group"><div className="gate-title-line"><h1>{title}</h1></div><div className="gate-title-meta"><span>{eyebrow || 'WORKSPACE'}</span><span>{description}</span></div></div>{actions ? <div className="gate-page-actions">{actions}</div> : null}</header>
 }
 
-function Button({ children, onClick, variant = 'secondary', disabled = false, type = 'button', title }: { children: React.ReactNode; onClick?: () => void; variant?: 'primary' | 'secondary' | 'quiet' | 'danger'; disabled?: boolean; type?: 'button' | 'submit'; title?: string }): React.ReactElement {
-  return <button type={type} title={title} disabled={disabled} className={`sm-button gate-button sm-button-${variant}`} onClick={onClick}>{children}</button>
+function Button({ children, onClick, variant = 'secondary', disabled = false, type = 'button', title, loading }: { children: React.ReactNode; onClick?: () => void; variant?: 'primary' | 'secondary' | 'quiet' | 'danger'; disabled?: boolean; type?: 'button' | 'submit'; title?: string; loading?: boolean }): React.ReactElement {
+  return <ActionButton loading={loading} type={type} title={title} disabled={disabled} className={`sm-button gate-button sm-button-${variant}`} onClick={onClick}>{children}</ActionButton>
 }
 
 function StatusPill({ status }: { status: string }): React.ReactElement {
-  const label: Record<string, string> = { ready: '已就绪', passed: '通过', blocked: '需处理', pending: '待运行', running: '运行中', completed: '已完成', stale: '已过期', empty: '暂无数据', archived: '已归档', candidate: '候选', confirmed: '已确认', published: '已发布', production: '生产', 'harness-native': 'Harness', 'workbench-test': '测试', failed: '失败', failure: '失败', cancelled: '已取消', healthy: '健康', degraded: '降级', unknown: '无法判断', correct: '正确', incorrect: '错误', 'quality-passed': '质量达标', 'below-threshold': '未达标', unannotated: '待标注', 'insufficient-labels': '标注不足', unaligned: '未生产对齐', unconfigured: '门槛未配置', 'exception-release': '例外发布', 'load-unknown': '加载未知', 'notification-failed': '通知失败', 'rolled-back': '已回滚' }
+  const label: Record<string, string> = { ready: '已就绪', passed: '通过', blocked: '需处理', pending: '待运行', running: '运行中', completed: '已完成', stale: '需要重新测评', empty: '暂无数据', archived: '已归档', candidate: '候选', confirmed: '已确认', published: '已发布', production: '生产', 'harness-native': 'Harness', 'workbench-test': '测试', failed: '失败', failure: '失败', cancelled: '已取消', healthy: '健康', degraded: '降级', unknown: '无法判断', correct: '正确', incorrect: '错误', 'quality-passed': '质量达标', 'below-threshold': '未达标', unannotated: '待标注', 'insufficient-labels': '有效标注待补充', unaligned: '未生产对齐', unconfigured: '待设置发布要求', 'exception-release': '例外发布', 'load-unknown': '加载未知', 'notification-failed': '通知失败', 'rolled-back': '已回滚' }
   const tone = ['ready', 'passed', 'completed', 'published', 'healthy', 'correct', 'quality-passed'].includes(status) ? 'green' : ['blocked', 'stale', 'failure', 'failed', 'degraded', 'incorrect', 'below-threshold', 'notification-failed'].includes(status) ? 'red' : ['pending', 'candidate', 'running', 'confirmed', 'cancelled', 'unannotated', 'insufficient-labels', 'unaligned', 'unconfigured', 'exception-release'].includes(status) ? 'amber' : 'blue'
   const gateTone = tone === 'green' ? 'success' : tone === 'red' ? 'error' : tone === 'amber' ? 'warning' : 'info'
   return <span className={`sm-pill sm-pill-${tone} gate-status status ${gateTone}`}><i />{label[status] || status}</span>
@@ -369,8 +409,8 @@ export function DashboardPage({ api, refresh, onNavigate, onChanged, onNotice }:
   const createSkill = async () => { try { await create.run({ title: '新建 Skill' }); onNotice('已创建工作草稿') } catch (error) { onNotice(safeError(error)) } }
   const section = (id: DashboardSnapshot['sections'][number]['id']) => data.sections.find(item => item.id === id) || EMPTY_DASHBOARD.sections.find(item => item.id === id)!
   const work = section('work'); const skills = section('skills'); const quality = section('quality'); const production = section('production')
-  const routeFor = (action: string): NavId => action === 'settings' ? 'settings' : action.includes('trace') ? 'traces' : action.includes('skill') ? 'skills' : 'evaluations'
-  const openItem = (item: DashboardSnapshot['sections'][number]['items'][number]) => onNavigate(routeFor(item.action), item.action === 'evaluation' ? {evaluationId:item.id} : item.action === 'skill' ? {skillId:item.skillId || item.id} : {})
+  const routeFor = (action: string): NavId => action === 'scenario' ? 'scenarios' : action === 'settings' ? 'settings' : action.includes('trace') ? 'traces' : action.includes('skill') ? 'skills' : 'evaluations'
+  const openItem = (item: DashboardSnapshot['sections'][number]['items'][number]) => onNavigate(routeFor(item.action), item.action === 'scenario' ? { scenarioId: item.scenarioId || '@new', skillId: item.skillId } : item.action === 'evaluation' ? item.createEvaluation ? { skillId: item.skillId, createEvaluation: true } : { evaluationId: item.id } : item.action === 'skill' ? { skillId: item.skillId || item.id } : {})
   const reasonFor = (item: DashboardSnapshot['sections'][number]['items'][number]) => {
     if (item.status) return item.status
     const detail = item.detail.toLowerCase()
@@ -388,10 +428,16 @@ export function DashboardPage({ api, refresh, onNavigate, onChanged, onNotice }:
   return <div className="sm-page dashboard-page">
     <header className="dashboard-head"><div><h1>Dashboard</h1><p>先处理阻断发布、测评或运行健康的 Skill；每一项都保留可返回的下钻路径。</p></div><div className="dashboard-range"><span className="range-note">生产 24h · 发布 30d · {lastUpdated}</span><Button variant="primary" onClick={() => work.items[0] ? openItem(work.items[0]) : onNavigate('evaluations')} disabled={!api || query.loading}>{work.items[0] ? '处理首个待处理 Skill' : '进入测评中心'}</Button></div></header>
     {query.error ? <InlineError message={query.error} onRetry={query.reload} /> : null}
-    <div className="dashboard-body"><section className="attention-panel" aria-labelledby="attention-title"><header className="section-head"><div><h2 id="attention-title">待处理 Skill</h2><p>按可行动原因分组，不按模糊的健康分数排序。</p></div><StatusPill status={work.items.length ? 'blocked' : 'empty'} /><span className="gate-count">{work.items.length} 项</span></header>{work.items.length ? <ul className="attention-list">{work.items.map(item => <li key={item.id}><button type="button" className="attention-item" onClick={() => openItem(item)}><span className="attention-reason"><StatusPill status={reasonFor(item)} /></span><span className="attention-copy"><strong>{item.title}</strong><small>{item.detail}</small></span><span className="attention-context gate-mono">{item.id}</span><span className="attention-time gate-mono">{formatTime(data.generatedAt)}</span><span className="row-link">查看 →</span></button></li>)}</ul> : <div className="gate-empty"><div><h2>暂无待处理事项</h2><p>Host 当前没有待处理测评、过期快照或运行异常。</p></div></div>}<footer className="attention-foot"><span>点击任一行会带着对应对象和筛选进入下钻页。</span><button className="row-link" type="button" onClick={() => onNavigate('skills')}>查看所有 Skill →</button></footer></section></div>
+    <div className="dashboard-body"><section className="attention-panel" aria-labelledby="attention-title"><header className="section-head"><div><h2 id="attention-title">待处理 Skill</h2><p>按可行动原因分组，不按模糊的健康分数排序。</p></div><StatusPill status={work.items.length ? 'blocked' : 'empty'} /><span className="gate-count">{work.items.length} 项</span></header>{work.items.length ? <ul className="attention-list">{work.items.map(item => <li key={item.id}><button type="button" className="attention-item" onClick={() => openItem(item)}><span className="attention-reason"><StatusPill status={reasonFor(item)} /></span><span className="attention-copy"><strong>{item.title}</strong><small>{item.detail}</small>{item.nextStep ? <p className="sm-next-step">{item.nextStep}</p> : null}</span><span className="attention-context gate-mono">{item.id}</span><span className="attention-time gate-mono">{formatTime(data.generatedAt)}</span><span className="row-link">{item.actionLabel || "查看详情"} →</span></button></li>)}</ul> : <div className="gate-empty"><div><h2>暂无待处理事项</h2><p>Host 当前没有待处理测评、过期快照或运行异常。</p></div></div>}<footer className="attention-foot"><span>点击任一行会带着对应对象和筛选进入下钻页。</span><button className="row-link" type="button" onClick={() => onNavigate('skills')}>查看所有 Skill →</button></footer></section></div>
     <section className="region-grid" aria-label="Dashboard 四个业务区域">
       <section className="region" aria-labelledby="skill-status-title"><header className="region-head"><div><h2 id="skill-status-title">Skill 状态</h2><p>{skills.items.length ? `${data.counts.activeSkills} 个活动 Skill · ${lastUpdated}` : '工作区还没有活动 Skill。'}</p></div><button type="button" className="row-link" onClick={() => onNavigate('skills')}>查看全部 →</button></header><div className="metric-strip"><Metric label="活动 Skill" value={data.counts.activeSkills} detail={skills.items.length ? skills.items[0].detail : '当前工作区'} /><Metric label="已发布" value={data.counts.publishedSkills} detail="不可变版本" /><Metric label="发布就绪" value={data.counts.publishReadySkills} detail="Host 发布门禁" /><Metric label="未测评" value={data.counts.unmeasuredSkills} detail="没有有效批次" /></div><div className="coverage-note"><h3>场景覆盖</h3><p>{data.coverage ? `${data.coverage.scenarioCount} 个场景引用 ${data.coverage.linkedSkillCount} / ${data.coverage.totalSkillCount} 个 Skill` : '场景覆盖等待同步。'}</p></div></section>
-      <section className="region" aria-labelledby="quality-title"><header className="region-head"><div><h2 id="quality-title">测评质量</h2><p>每个 Skill 最新当前快照批次；质量达标不等于发布就绪。</p></div><button type="button" className="row-link" onClick={() => onNavigate('evaluations')}>进入测评中心 →</button></header>{quality.items.length ? <table className="quality-table"><thead><tr><th>Skill</th><th>准确率 / 门槛</th><th>主要问题</th><th>状态</th></tr></thead><tbody>{quality.items.slice(0, 5).map(item => <tr key={item.id}><td><button type="button" className="sm-link quality-skill" onClick={() => openItem(item)}><strong>{item.title}</strong><small>{item.id}</small></button></td><td className="quality-number" title={item.thresholds?.map(threshold => `${threshold.name}：准确率 ${Number((threshold.minimumAccuracy * 100).toFixed(1))}% · 最低标注 ${threshold.minimumLabels} 条`).join('；')}><div>{item.detail}</div><small>有效标注 {item.labeled ?? '—'} / {item.minimumLabels ?? '未配置'}</small>{(item.thresholds?.length ?? 0) > 1 ? <small> · {item.thresholds!.length} 个活动场景最高门槛</small> : null}</td><td>{item.majorIssue || '等待 Host 质量结论'}</td><td><StatusPill status={item.status || 'unknown'} /></td></tr>)}</tbody></table> : <div className="empty-region"><div><h3>尚无当前快照测评批次</h3><p>完成真实 Harness 测评后显示结果。过期批次可从待处理项查看；未生产对齐的真实结果不会被隐藏。</p><Button onClick={() => onNavigate('evaluations')}>创建测评</Button></div></div>}</section>
+      <section className="region" aria-labelledby="quality-title"><header className="region-head"><div><h2 id="quality-title">测评质量</h2><p>每个 Skill 最新当前快照批次；质量达标不等于发布就绪。</p></div><button type="button" className="row-link" onClick={() => onNavigate('evaluations')}>进入测评中心 →</button></header>{quality.items.length ? <table className="quality-table"><colgroup><col className="quality-col-skill" /><col className="quality-col-number" /><col className="quality-col-status" /></colgroup><thead><tr><th scope="col">Skill</th><th scope="col">准确率 / 门槛</th><th scope="col">状态</th></tr></thead>
+        {quality.items.slice(0, 5).map(item => <tbody key={item.id}>
+          <tr className="quality-summary"><td><button type="button" className="sm-link quality-skill" onClick={() => openItem(item)}><strong>{item.title}</strong><small>{item.id}</small></button></td>
+            <td className="quality-number" title={item.thresholds?.map(threshold => `${threshold.name}：准确率 ${Number((threshold.minimumAccuracy * 100).toFixed(1))}% · 最低标注 ${threshold.minimumLabels} 条`).join('；')}><div>{item.detail}</div><small>有效标注 {item.labeled ?? '—'} / {item.minimumLabels ?? '未配置'}</small>{(item.thresholds?.length ?? 0) > 1 ? <small>{item.thresholds!.length} 个活动场景最高门槛</small> : null}</td><td><StatusPill status={item.status || 'unknown'} /></td></tr>
+          <tr className="quality-details"><td colSpan={3}><div className="quality-issue"><div><p>{item.majorIssue || '等待 Host 质量结论'}</p>{item.nextStep ? <p className="sm-next-step">{item.nextStep}</p> : null}</div><button type="button" className="sm-link" onClick={() => openItem(item)}>{item.actionLabel || '查看详情'} →</button></div></td></tr>
+        </tbody>)}
+      </table> : <div className="empty-region"><div><h3>尚无当前快照测评批次</h3><p>完成真实 Harness 测评后显示结果。过期批次可从待处理项查看；未生产对齐的真实结果不会被隐藏。</p><Button onClick={() => onNavigate('evaluations')}>创建测评</Button></div></div>}</section>
       <section className="region" aria-labelledby="production-title"><header className="region-head"><div><h2 id="production-title">生产表现</h2><p>最近 24 小时 · 只采用真实生产 Trace。</p></div><StatusPill status={production.items.length ? 'ready' : 'empty'} /></header>{production.items.length ? <><div className="metric-strip"><Metric label="调用量" value={data.productionMetrics?.count ?? data.counts.traces24h} detail="近 24 小时已关联生产 Trace" /><Metric label="成功率" value={data.productionMetrics?.successRate == null ? '—' : `${Math.round(data.productionMetrics.successRate * 100)}%`} detail="仅完整且状态已知调用" /><Metric label="P95" value={data.productionMetrics?.p95Ms == null ? '—' : `${data.productionMetrics.p95Ms} ms`} detail="排除残缺链路" /><Metric label="未知状态" value={data.productionMetrics?.unknownCount ?? '—'} detail="不计为成功" /></div><ul className="release-list">{production.items.map(item => <li key={item.id}><button type="button" className="release-item" onClick={openProduction}><StatusPill status="production" /><span className="release-copy"><strong>{item.title}</strong><small>{item.detail}</small></span><span className="release-time">查看 →</span></button></li>)}</ul></> : <div className="empty-region"><div><StatusPill status="empty" /><h3>尚不能显示调用量、成功率或 P95</h3><p>工作台不会生成模拟趋势或把空数据解释为零错误。接入 LangChain OTLP / HTTP 契约后，可按真实日聚合下钻。</p><Button onClick={openProduction}>查看生产 Trace 说明</Button></div></div>}</section>
       <section className="region" aria-labelledby="release-title"><header className="region-head"><div><h2 id="release-title">发布变更</h2><p>最近 30 天真实发布与回滚事件。</p></div><button type="button" className="row-link" onClick={() => releaseChanges?.[0] ? openRelease(releaseChanges[0]) : onNavigate('skills')}>查看发布 →</button></header>{releases.error ? <InlineError message={releases.error} onRetry={releases.reload} /> : releases.loading && !releaseChanges ? <div className="empty-region" role="status">正在读取发布与回滚事件…</div> : releaseChanges === undefined ? <InlineError message="宿主尚未返回发布事件记录，请更新插件后重试；不能据此判断没有发布。" onRetry={releases.reload} /> : releaseChanges.length ? <ul className="release-list">{releaseChanges.slice(0, 5).map(release => <li key={release.eventId}><button type="button" className="release-item" onClick={() => openRelease(release)}><StatusPill status={release.action === 'rollback' ? 'rolled-back' : release.exceptionReason ? 'exception-release' : 'published'} /><span className="release-copy"><strong>{release.title} · {release.version}</strong><small>{release.action === 'rollback' ? '已回滚生效指针；草稿未改变' : release.exceptionReason ? `例外原因：${release.exceptionReason}` : '不可变版本已写入运行 SQLite'} · {notificationLabel[release.notificationStatus]} · 运行端加载未知</small></span><span className="release-time">{formatTime(release.createdAt)}</span></button></li>)}</ul> : <div className="empty-region"><div><h3>最近 30 天暂无发布变更</h3><p>已成功读取发布与回滚事件；当前时间范围内没有记录。</p></div></div>}<footer className="region-foot">管理端发布、回滚或通知成功不等于运行端已经加载。</footer></section>
     </section>
@@ -419,14 +465,23 @@ function SkillsPage({ api, refresh, initialSkillId, initialReleaseId, initialTab
   const copy = useMutation(api, 'skillCopy', changed)
   const setDraftDirty = useCallback((value: boolean) => { setDirty(value); onDirtyChange(value) }, [onDirtyChange])
   const visible = list.data.skills.filter(skill => !search.trim() || `${skill.title} ${skill.skillId}`.toLowerCase().includes(search.trim().toLowerCase()))
-  const createBlank = async () => { try { const result = await create.run({ title: '未命名 Skill' }); setSelectedId(result.skill.skillId); onNotice('已创建工作草稿，请填写名称与规则') } catch (error) { onNotice(safeError(error)) } }
+  const [showCreation, setShowCreation] = useState(false)
+  const [creationTitle, setCreationTitle] = useState('未命名 Skill')
+  const [creationFormat, setCreationFormat] = useState<'package' | 'markdown'>('package')
+  const createFromSource = async (kind: 'mindmap' | 'text' | 'blank') => {
+    try {
+      const result = await create.run({ title: creationTitle.trim() || '未命名 Skill', format: creationFormat, ...(kind === 'blank' ? {} : { sourceInput: { kind, ...(kind === 'text' ? { text: '请在这里描述业务规则、判断条件和期望输出。' } : {}) } }) })
+      setSelectedId(result.skill.skillId); setShowCreation(false); onNotice('已创建草稿，编辑来源后可通过模型生成候选。')
+    } catch (error) { onNotice(safeError(error)) }
+  }
+  const createBlank = () => setShowCreation(true)
   const importFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; if (!file) return
     try {
       if (file.size > 8 * 1024 * 1024) throw new Error('导入文件不能超过 8 MB')
       const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ''
       for (const byte of bytes) binary += String.fromCharCode(byte)
-      const result = await importer.run({ input: btoa(binary), title: file.name.replace(/\.[^.]+$/, '') })
+      const result = await importer.run({ input: btoa(binary), title: file.name.replace(/\.[^.]+$/, ''), ...(file.name.endsWith('.xmind') ? { format: creationFormat } : {}) })
       setSelectedId(result.skill.skillId); onNotice(`已导入 ${file.name}`)
     } catch (error) { onNotice(safeError(error)) } finally { event.target.value = '' }
   }
@@ -443,40 +498,40 @@ function SkillsPage({ api, refresh, initialSkillId, initialReleaseId, initialTab
   const current = get.data.skill?.skillId === selectedId ? get.data.skill : undefined
   return <div className="sm-page">
     <header className="gate-page-head"><div className="gate-title-group"><div className="gate-title-line">{selectedId ? <button type="button" className="sm-link" onClick={backToList}>← Skill 列表</button> : null}<h1>{current?.title || 'Skill 管理'}</h1>{current ? <StatusPill status={current.status} /> : null}</div><div className="gate-title-meta">{current ? <><span className="gate-mono">{current.skillId}</span><span>规则权威：{current.authority}</span></> : <span>原生 Skill 包、来源知识、固定测评与版本发布</span>}</div></div><div className="gate-page-actions"><Button onClick={() => xmindInput.current?.click()} disabled={dirty || importer.busy || !api}>导入 XMind</Button><Button onClick={() => archiveInput.current?.click()} disabled={dirty || importer.busy || !api}>导入 Skill 包</Button><input ref={xmindInput} className="sm-upload-input" tabIndex={-1} type="file" aria-label="导入 XMind 文件" accept=".xmind" onChange={event => void importFile(event)} /><input ref={archiveInput} className="sm-upload-input" tabIndex={-1} type="file" aria-label="导入 Skill ZIP" accept=".zip,.skill" onChange={event => void importFile(event)} /><Button variant="primary" onClick={createBlank} disabled={dirty || create.busy || !api}>新建 Skill</Button></div></header>
+    {showCreation ? <section className="gate-create sm-create-skill" aria-label="新建 Skill 方式"><div className="sm-card-heading"><h2>从业务知识开始创建</h2><Button onClick={() => setShowCreation(false)}>收起</Button></div><div className="sm-form-grid"><label>Skill 名称<input value={creationTitle} onChange={event => setCreationTitle(event.target.value)} /></label><label>生成格式<WorkbenchSelect value={creationFormat} onChange={event => setCreationFormat(event.target.value as 'package' | 'markdown')}><option value="package">原生 Skill 包（三文件）</option><option value="markdown">独立 Markdown Skill</option></WorkbenchSelect></label></div><p>选择来源后进入编辑页；通过模型生成候选，核对后应用。两种格式均支持测评与发布。</p><div className="sm-source-tools"><Button loading={create.busy} variant="primary" onClick={() => createFromSource('mindmap')} disabled={!api}>新建思维导图</Button><Button loading={create.busy} onClick={() => createFromSource('text')} disabled={!api}>从文字描述开始</Button><Button onClick={() => xmindInput.current?.click()} disabled={importer.busy || !api}>上传 XMind</Button><Button onClick={() => createFromSource('blank')} disabled={create.busy || !api}>直接编辑文件</Button></div></section> : null}
     {leavePending ? <div className="gate-notice warning"><div><strong>这些更改还没有保存。</strong><p>放弃后恢复到最近保存的工作草稿。</p></div><Button onClick={() => setLeavePending(false)}>继续编辑</Button><Button variant="danger" onClick={() => { setLeavePending(false); setDraftDirty(false); setSelectedId('') }}>放弃未保存更改</Button></div> : null}
-    {!selectedId ? <section className="gate-create"><div className="sm-card-heading"><div><h2>工作区 Skill</h2><p>{visible.length} 个对象</p></div><Button onClick={list.reload}>刷新</Button></div><div className="sm-list-tools"><input aria-label="搜索 Skill" placeholder="搜索名称或 Skill ID" value={search} onChange={e => setSearch(e.target.value)} /><label className="sm-check-label"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />显示归档</label></div>{list.error ? <InlineError message={list.error} onRetry={list.reload} /> : null}{visible.length ? <div className="sm-master-list">{visible.map(skill => <button type="button" className="sm-master-row" key={skill.skillId} onClick={() => setSelectedId(skill.skillId)}><span className="sm-avatar">✦</span><span><strong>{skill.title}</strong><small>{skill.skillId} · v{skill.draftVersion} · {formatTime(skill.updatedAt)}</small></span><StatusPill status={skill.status} /></button>)}</div> : <EmptyState title={list.loading ? '正在读取 Skill' : search ? '没有匹配的 Skill' : '还没有 Skill'} description="从空白、XMind 或原生 Skill 包建立第一份工作草稿。" action={<Button onClick={createBlank} disabled={!api || create.busy}>新建草稿</Button>} />}</section> : get.error ? <InlineError message={get.error} onRetry={get.reload} /> : current ? <SkillEditor key={current.skillId} initialReleaseId={current.skillId === initialSkillId ? initialReleaseId : undefined} initialTab={current.skillId === initialSkillId ? initialTab : undefined} api={api} skill={current} onChanged={changed} onNotice={onNotice} onNavigate={onNavigate} onDirtyChange={setDraftDirty} onCopy={copySkill} onArchive={archiveSkill} onDelete={deleteSkill} copyBusy={copy.busy} /> : <EmptyState title="正在读取工作草稿" description="正在同步文件、内容哈希与来源引用。" />}
+    {!selectedId ? <section className="gate-create"><div className="sm-card-heading"><div><h2>工作区 Skill</h2><p>{visible.length} 个对象</p></div><Button onClick={list.reload}>刷新</Button></div><div className="sm-list-tools sm-filter-form"><input aria-label="搜索 Skill" placeholder="搜索名称或 Skill ID" value={search} onChange={e => setSearch(e.target.value)} /><label className="sm-check-label"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />显示归档</label></div>{list.error ? <InlineError message={list.error} onRetry={list.reload} /> : null}{visible.length ? <div className="sm-master-list">{visible.map(skill => <button type="button" className="sm-master-row" key={skill.skillId} onClick={() => setSelectedId(skill.skillId)}><span className="sm-avatar">✦</span><span><strong>{skill.title}</strong><small>{skill.skillId} · v{skill.draftVersion} · {formatTime(skill.updatedAt)}</small></span><StatusPill status={skill.status} /></button>)}</div> : <EmptyState title={list.loading ? '正在读取 Skill' : search ? '没有匹配的 Skill' : '还没有 Skill'} description="从空白、XMind 或原生 Skill 包建立第一份工作草稿。" action={<Button onClick={createBlank} disabled={!api || create.busy}>新建草稿</Button>} />}</section> : get.error ? <InlineError message={get.error} onRetry={get.reload} /> : current ? <SkillEditor key={current.skillId} initialReleaseId={current.skillId === initialSkillId ? initialReleaseId : undefined} initialTab={current.skillId === initialSkillId ? initialTab : undefined} api={api} skill={current} onChanged={changed} onNotice={onNotice} onNavigate={onNavigate} onDirtyChange={setDraftDirty} onCopy={copySkill} onArchive={archiveSkill} onDelete={deleteSkill} copyBusy={copy.busy} /> : <EmptyState title="正在读取工作草稿" description="正在同步文件、内容哈希与来源引用。" />}
   </div>
 }
 
-export function EvaluationsPage({ api, refresh, initialSkillId, initialEvaluationId, initialCaseId, onChanged, onNavigate, onNotice, onDirtyChange }: { api: RemoteApi; refresh: number; initialSkillId?: string; initialEvaluationId?: string; initialCaseId?: string; onChanged: () => void; onNavigate: (route: NavId, target?: WorkbenchFocus) => void; onNotice: (message: string) => void; onDirtyChange?: (dirty: boolean) => void }): React.ReactElement {
+export function EvaluationsPage({ initialCreate, api, refresh, initialSkillId, initialEvaluationId, initialCaseId, onChanged, onNavigate, onNotice, onDirtyChange }: { initialCreate?: boolean; api: RemoteApi; refresh: number; initialSkillId?: string; initialEvaluationId?: string; initialCaseId?: string; onChanged: () => void; onNavigate: (route: NavId, target?: WorkbenchFocus) => void; onNotice: (message: string) => void; onDirtyChange?: (dirty: boolean) => void }): React.ReactElement {
   const [filterSkillId, setFilterSkillId] = useState(initialSkillId || '')
   const list = useRemoteQuery<{ evaluations: EvaluationBatch[] }>(api, 'evaluationList', [{ skillId: filterSkillId || undefined }], { evaluations: [] })
   useEffect(() => { if (refresh > 0) list.reload() }, [refresh])
   const skills = useRemoteQuery<{ skills: SkillDraft[] }>(api, 'skillList', [{ includeArchived: false }], { skills: [] })
   const scenarios = useRemoteQuery<{ scenarios: Scenario[] }>(api, 'scenarioList', [{ includeArchived: false }], { scenarios: [] })
   const [selectedId, setSelectedId] = useState(initialEvaluationId || '')
-  const filteredBatches = list.data.evaluations.filter(item => !filterSkillId || item.skillId === filterSkillId)
-  const selected = selectedId || filteredBatches[0]?.evaluationId || ''
+  const filteredBatches = list.data.evaluations.filter(item => !filterSkillId || item.skillId === filterSkillId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const selected = selectedId
   const [selectedSkillId, setSelectedSkillId] = useState(initialSkillId || '')
-  const [selectedScenarioId, setSelectedScenarioId] = useState('')
-  const [caseInput, setCaseInput] = useState('{"sample":"manual"}')
-  const [caseExpected, setCaseExpected] = useState('{"verdict":"pass"}')
   const [focusedCaseId, setFocusedCaseId] = useState(initialCaseId || '')
   const [suggestions, setSuggestions] = useState<AnyRecord[]>([])
   const [showBatches, setShowBatches] = useState(false)
-  const [showCreate, setShowCreate] = useState(false)
+  const [showCreate, setShowCreate] = useState(Boolean(initialCreate))
   const [activeView, setActiveView] = useState<'overview' | 'annotation' | 'suggestions'>('annotation')
   const [actionError, setActionError] = useState('')
   const [annotationDirty, setAnnotationDirty] = useState(false)
+  const [creationDirty, setCreationDirty] = useState(false)
+  const [outcomeMessage, setOutcomeMessage] = useState('')
+  const [renameText, setRenameText] = useState<string>()
   const [annotationRevision, setAnnotationRevision] = useState(0)
   const [pendingChange, setPendingChange] = useState<(() => void)>()
   const [lastOutcome, setLastOutcome] = useState<{ evaluation: EvaluationBatch; job?: AnyRecord }>()
-  useEffect(() => { setFilterSkillId(initialSkillId || ''); if (initialSkillId) setSelectedSkillId(initialSkillId); setSelectedId(initialEvaluationId || ''); setFocusedCaseId(initialCaseId || '') }, [initialSkillId, initialEvaluationId, initialCaseId])
-  const dirtyChanged = useCallback((dirty: boolean) => { setAnnotationDirty(dirty); onDirtyChange?.(dirty) }, [onDirtyChange])
+  useEffect(() => { setFilterSkillId(initialSkillId || ''); if (initialSkillId) setSelectedSkillId(initialSkillId); setSelectedId(initialEvaluationId || ''); setFocusedCaseId(initialCaseId || ''); setShowCreate(Boolean(initialCreate)) }, [initialSkillId, initialEvaluationId, initialCaseId, initialCreate])
+  const dirtyChanged = useCallback((dirty: boolean) => { setAnnotationDirty(dirty) }, [])
+  useEffect(() => { onDirtyChange?.(annotationDirty || creationDirty) }, [annotationDirty, creationDirty, onDirtyChange])
   useEffect(() => () => { onDirtyChange?.(false) }, [onDirtyChange])
   useEffect(() => { if (!selectedSkillId && skills.data.skills[0]) setSelectedSkillId(skills.data.skills[0].skillId) }, [skills.data.skills, selectedSkillId])
-  const availableScenarios = useMemo(() => scenarios.data.scenarios.filter(item => !selectedSkillId || item.skillIds.includes(selectedSkillId)), [scenarios.data.scenarios, selectedSkillId])
-  useEffect(() => { if (selectedScenarioId && !availableScenarios.some(item => item.scenarioId === selectedScenarioId)) setSelectedScenarioId('') }, [availableScenarios, selectedScenarioId])
   const detail = useRemoteQuery<{ evaluation?: EvaluationBatch; job?: AnyRecord; progress?: AnyRecord }>(api, 'evaluationStatus', [selected], { evaluation: undefined }, Boolean(selected))
   const create = useMutation(api, 'evaluationCreate', () => { list.reload(); onChanged() })
   const run = useMutation(api, 'evaluationRun', () => { detail.reload(); list.reload(); onChanged() })
@@ -506,26 +561,22 @@ export function EvaluationsPage({ api, refresh, initialSkillId, initialEvaluatio
   const acceptOutcome = (result: AnyRecord) => { if (result?.evaluation) setLastOutcome({ evaluation: result.evaluation, job: result.job }) }
   const requestSwitch = (action: () => void) => {
     if (annotate.busy || create.busy || optimize.busy || applySuggestion.busy || run.busy || rerun.busy) { onNotice('正在提交当前操作，请等待完成后再切换。'); return }
-    if (annotationDirty) { setPendingChange(() => action); return }
+    if (annotationDirty || creationDirty) { setPendingChange(() => action); return }
     action()
   }
   const changeSkillFilter = (skillId: string) => requestSwitch(() => { setFilterSkillId(skillId); setSelectedId(''); setFocusedCaseId(''); setSuggestions([]); if (skillId) setSelectedSkillId(skillId) })
-  const createBatch = async () => {
+  const createBatch = async (request: AnyRecord) => {
     setActionError('')
-    const skillId = selectedSkillId || skills.data.skills[0]?.skillId
-    if (!skillId) { onNavigate('skills'); onNotice('请先创建一份 Skill'); return }
-    const request: AnyRecord = { skillId }
-    if (selectedScenarioId) request.scenarioId = selectedScenarioId
-    else {
-      try { request.cases = [{ caseId: `case-${Date.now()}`, input: JSON.parse(caseInput), expected: JSON.parse(caseExpected) }] } catch { reportError(new Error('输入和期望必须是合法 JSON')); return }
-    }
     try {
       const result = await create.run(request)
-      if (!result?.evaluation?.evaluationId) throw new Error('Host 未返回新批次，未切换当前工作面。')
-      acceptOutcome(result); setSelectedId(result.evaluation.evaluationId); setFilterSkillId(skillId); setFocusedCaseId(''); setSuggestions([]); setShowCreate(false); setActiveView('annotation'); dirtyChanged(false)
-      onNotice(selectedScenarioId ? '已按场景样例创建固定测评批次' : '已创建固定测评批次；运行时将调用 Harness 模型通道')
-    } catch (reason) { reportError(reason) }
+      if (!result?.evaluation?.evaluationId) throw new Error('未收到创建结果，请重试。')
+      acceptOutcome(result); setSelectedId(result.evaluation.evaluationId); setFilterSkillId(request.skillId); setFocusedCaseId(''); setSuggestions([]); setShowCreate(false); setActiveView('annotation'); dirtyChanged(false); setCreationDirty(false)
+      setOutcomeMessage(`“${evaluationName(result.evaluation)}”已创建。点击“运行测评”，完成后逐条检查模型结果。`)
+      return true
+    } catch (reason) { reportError(reason); return false }
   }
+  const rename = useMutation(api, 'evaluationRename', () => list.reload())
+  const renameBatch = async () => { if (!batch || !renameText?.trim()) return; try { const result = await rename.run({ evaluationId: batch.evaluationId, name: renameText }); acceptOutcome(result); setRenameText(undefined); setOutcomeMessage('测评名称已保存。') } catch (reason) { reportError(reason) } }
   const runBatch = async () => { if (!batch) return; setActionError(''); try { const result = await run.run({ evaluationId: batch.evaluationId }); acceptOutcome(result); onNotice(result.alreadyRunning ? '该批次已在后台运行' : '测评已进入后台任务队列') } catch (reason) { reportError(reason) } }
   const cancelBatch = async () => { if (!batch) return; setActionError(''); try { const result = await cancel.run({ evaluationId: batch.evaluationId }); acceptOutcome(result); onNotice(result.status === 'cancel-requested' ? '已请求取消；当前用例完成后停止分配' : '测评已停止，已完成结果会保留') } catch (reason) { reportError(reason) } }
   const rerunFailedCases = async () => { if (!batch) return; setActionError(''); try { const result = await rerun.run({ evaluationId: batch.evaluationId }); acceptOutcome(result); onNotice(result.status === 'empty' ? '没有可重跑的失败用例' : result.alreadyRunning ? '该批次已在后台运行' : '失败用例已重新排队') } catch (reason) { reportError(reason) } }
@@ -538,13 +589,13 @@ export function EvaluationsPage({ api, refresh, initialSkillId, initialEvaluatio
       acceptOutcome(result); dirtyChanged(false)
       const next = result.evaluation.cases?.find((item: EvaluationCase) => item.grade === undefined && item.actual !== undefined && !item.systemError && item.caseId !== testCase.caseId)
       if (goNext && next) setFocusedCaseId(next.caseId)
-      onNotice(goNext && next ? '人工标注已保存，已定位下一条待标注用例' : '人工标注已保存')
+      setOutcomeMessage(goNext && next ? '上一条已保存，已进入下一条待标注记录。' : '')
       return true
     } catch (reason) { reportError(reason); return false }
   }
   const generateSuggestions = async () => { if (!batch) return; setActionError(''); try { const result = await optimize.run(batch.evaluationId, { direct: true }); setSuggestions(result.suggestions || []); setActiveView('suggestions'); onNotice(result.suggestions?.length ? `生成 ${result.suggestions.length} 条优化建议` : '当前没有可生成的优化建议') } catch (reason) { reportError(reason) } }
   const applyOneSuggestion = async (suggestion: AnyRecord) => { if (!batch) return; setActionError(''); try { await applySuggestion.run({ evaluationId: batch.evaluationId, suggestion }); setSuggestions(current => current.filter(item => item.suggestionId !== suggestion.suggestionId)); onNotice('优化建议已应用，旧测评已过期') } catch (reason) { reportError(reason) } }
-  const chooseBatch = (id: string) => requestSwitch(() => { setSelectedId(id); setFocusedCaseId(''); setSuggestions([]); setShowBatches(false); setActionError('') })
+  const chooseBatch = (id: string) => requestSwitch(() => { setOutcomeMessage(''); setRenameText(undefined); setSelectedId(id); setFocusedCaseId(''); setSuggestions([]); setShowBatches(false); setShowCreate(false); setActionError('') })
   const executionBusy = Boolean(batch?.status === 'running' || ['queued', 'running', 'cancel-requested'].includes(job?.status))
   const failedCount = batch?.cases.filter(item => item.systemError || (item.actual === undefined && item.grade === 'unknown')).length || 0
   const finishedCount = batch?.cases.filter(item => item.actual !== undefined || item.systemError).length || 0
@@ -557,53 +608,58 @@ export function EvaluationsPage({ api, refresh, initialSkillId, initialEvaluatio
       ? '模型运行、人工标注和 Trace 都从 Host 返回；保存标注只写入人工事实。'
       : '该批次尚未证明与生产模型配置一致；完成标注后仍不能直接满足发布门禁。'
   return <div className="sm-page evaluation-page">
-    <PageIntro eyebrow="EVALUATION" title={batch ? `批次 ${batch.evaluationId}` : '测评中心'} description="固定 Skill 快照、模型执行证据与人工标注。" actions={<><Button onClick={() => { list.reload(); detail.reload() }}>刷新批次</Button>{batch ? <Button onClick={() => setShowBatches(value => !value)}>{showBatches ? '收起批次' : '切换批次'}</Button> : null}<Button variant="primary" onClick={() => requestSwitch(() => setShowCreate(value => !value))} disabled={create.busy || !api}>{showCreate ? '收起创建' : '+ 创建测评'}</Button></>} />
-    <section className="gate-batch-picker-panel" aria-label="测评筛选"><label>按 Skill 筛选 <select aria-label="按 Skill 筛选" value={filterSkillId} onChange={event => changeSkillFilter(event.target.value)}><option value="">全部 Skill</option>{skills.data.skills.map(skill => <option key={skill.skillId} value={skill.skillId}>{skill.title}</option>)}</select></label></section>
-    {showBatches ? <section className="gate-batch-picker-panel" aria-label="测评批次选择">{filteredBatches.length ? filteredBatches.map(item => <button type="button" className={`batch-option ${item.evaluationId === selected ? 'is-selected' : ''}`} key={item.evaluationId} onClick={() => chooseBatch(item.evaluationId)}><span><strong>{item.evaluationId}</strong><small>{item.skillId} · {item.cases.length} 个用例</small></span><StatusPill status={item.status} /></button>) : <p>当前筛选下还没有固定测评批次。</p>}</section> : null}
-    {showCreate || (!selected && !list.loading) ? <section className="gate-create evaluation-create"><div className="sm-card-heading"><div><h2>创建固定批次</h2><p>选择场景样例，或提供一条输入与期望 JSON；创建后快照不再随工作草稿改变。</p></div><StatusPill status={api ? 'ready' : 'blocked'} /></div><div className="sm-form-grid sm-eval-create-grid"><label>Skill<select value={selectedSkillId} onChange={event => setSelectedSkillId(event.target.value)}><option value="">选择 Skill</option>{skills.data.skills.map(skill => <option key={skill.skillId} value={skill.skillId}>{skill.title} · {skill.skillId}</option>)}</select></label><label>业务场景（可选）<select value={selectedScenarioId} onChange={event => setSelectedScenarioId(event.target.value)}><option value="">直接用例</option>{availableScenarios.map(scenario => <option key={scenario.scenarioId} value={scenario.scenarioId}>{scenario.name}</option>)}</select></label>{!selectedScenarioId ? <><label>输入 JSON<textarea value={caseInput} onChange={event => setCaseInput(event.target.value)} /></label><label>期望 JSON<textarea value={caseExpected} onChange={event => setCaseExpected(event.target.value)} /></label></> : <div className="sm-form-hint">将使用场景中全部样例和当前已确认解析规则生成业务记录；版式不唯一或零记录会阻止创建。</div>}</div><div className="sm-eval-create-action"><Button variant="primary" onClick={() => requestSwitch(() => void createBatch())} disabled={create.busy || !api}>{create.busy ? '创建中…' : '创建固定批次'}</Button></div></section> : null}
+    <PageIntro eyebrow="EVALUATION" title={batch ? evaluationName(batch) : '测评中心'} description="用真实文本或 Excel 检查 Skill 的处理结果，运行后人工判断是否正确。" actions={<>{selected ? <Button onClick={() => requestSwitch(() => { setSelectedId(''); setFocusedCaseId(''); setShowCreate(false); setActionError('') })}>← 测评列表</Button> : null}<Button loading={list.loading} onClick={() => { list.reload(); detail.reload() }}>刷新列表</Button>{batch ? <Button onClick={() => setShowBatches(value => !value)}>{showBatches ? '收起批次' : '切换批次'}</Button> : null}<Button variant="primary" onClick={() => requestSwitch(() => setShowCreate(value => !value))} disabled={create.busy || !api}>{showCreate ? '收起创建' : '+ 创建测评'}</Button></>} />
+    <section className="sm-filter-form" aria-label="测评筛选"><label>按 Skill 筛选 <WorkbenchSelect aria-label="按 Skill 筛选" value={filterSkillId} onChange={event => changeSkillFilter(event.target.value)}><option value="">全部 Skill</option>{skills.data.skills.map(skill => <option key={skill.skillId} value={skill.skillId}>{skill.title}</option>)}</WorkbenchSelect></label></section>
+    {showBatches || !selected ? <section className="gate-batch-picker-panel" aria-label="测评批次选择">{filteredBatches.length ? filteredBatches.map(item => <button type="button" className={`batch-option ${item.evaluationId === selected ? 'is-selected' : ''}`} key={item.evaluationId} onClick={() => chooseBatch(item.evaluationId)}><span><strong>{evaluationName(item)}</strong><small>{item.skillSnapshot?.title || skills.data.skills.find(skill => skill.skillId === item.skillId)?.title || "Skill"} · {item.cases.length} 条记录 · {new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })}</small></span><StatusPill status={item.status} /></button>) : <p>当前筛选下还没有固定测评批次。</p>}</section> : null}
+    {showCreate || (!selected && !list.loading && !filteredBatches.length) ? <EvaluationCreate api={api} skills={skills.data.skills} scenarios={scenarios.data.scenarios} initialSkillId={selectedSkillId} busy={create.busy} onCreate={createBatch} onDirtyChange={setCreationDirty} /> : null}
     {list.error ? <InlineError message={list.error} onRetry={list.reload} /> : null}
     {skills.error ? <InlineError message={skills.error} onRetry={skills.reload} /> : null}
     {scenarios.error ? <InlineError message={scenarios.error} onRetry={scenarios.reload} /> : null}
     {detail.error ? <InlineError message={detail.error} onRetry={detail.reload} /> : null}
     {actionError ? <div className="gate-notice error" role="alert"><strong>操作未完成。</strong> {actionError}</div> : null}
-    {!batch ? <section className="gate-empty"><div><StatusPill status="empty" /><h2>没有选中的测评批次</h2><p>创建批次后，页面会显示固定快照、模型结果、Trace 摘要和逐条人工标注。</p><Button variant="primary" onClick={createBatch} disabled={!api}>创建第一批</Button></div></section> : <>
+    {!batch ? selected ? <section className="gate-empty" role="status">正在读取测评批次…</section> : null : <>
+      {outcomeMessage ? <div className="sm-evaluation-inline" role="status">{outcomeMessage}</div> : null}
+      <div className="sm-evaluation-identity"><span>测评编号：{batch.evaluationId}</span>{renameText === undefined ? <Button onClick={() => setRenameText(evaluationName(batch))}>修改测评名称</Button> : <><input aria-label="新的测评名称" maxLength={120} value={renameText} onChange={event => setRenameText(event.target.value)} /><Button disabled={rename.busy || !renameText.trim()} onClick={renameBatch}>{rename.busy ? '保存中…' : '保存名称'}</Button><Button disabled={rename.busy} onClick={() => setRenameText(undefined)}>取消</Button></>}</div>
       <nav className="gate-tabs" aria-label="测评批次视图">{([['overview', '批次概览'], ['annotation', '用例标注'], ['suggestions', '优化建议']] as const).map(([id, label]) => <button key={id} className={`gate-tab ${activeView === id ? 'is-active' : ''}`} type="button" aria-current={activeView === id ? 'page' : undefined} onClick={() => requestSwitch(() => setActiveView(id))}>{label}</button>)}</nav>
-      <section className="context-belt" aria-label="固定批次证据带"><article className="context-stage"><div className="context-kicker"><span>01 · 测试快照</span><StatusPill status="ready" /></div><h2>{batch.skillSnapshot?.title || batch.skillId}</h2><p className="gate-mono">sha256: {batch.snapshotHash.slice(0, 16)}… · {batch.cases.length} 个用例</p></article><article className="context-stage"><div className="context-kicker"><span>02 · 运行环境</span><StatusPill status={batch.productionAligned === true ? 'ready' : 'blocked'} /></div><h2>{String(batch.executionProfile?.model || 'Harness 模型')}</h2><p>{String(batch.executionProfile?.provider || 'Provider 未记录')} · {batch.productionAligned === true ? '生产对齐' : '尚未证明生产对齐'}</p></article><article className="context-stage"><div className="context-kicker"><span>03 · 标注进度</span><StatusPill status={batchStatus} /></div><h2>{progressLabel(batch)} 已处理</h2><p>{batch.accuracy && batch.accuracy.denominator > 0 ? `主准确率 ${Math.round(batch.accuracy.value * 100)}%` : '等待有效标注'} · {batch.status === 'stale' ? '旧快照' : '当前批次'}</p></article></section>
-      <div className={`gate-notice ${batch.status === 'stale' ? 'warning' : batch.status === 'failed' ? 'error' : ''}`}><strong>{batch.status === 'failed' ? '模型运行失败。' : batch.status === 'stale' ? '批次已过期。' : '当前用例来自固定批次快照。'}</strong> {batchNotice}</div>
-      <section className="gate-work-belt evaluation-run-toolbar" aria-label="测评运行操作"><div className="gate-belt-stage"><strong>{executionBusy ? '模型执行中' : batch.status === 'pending' ? '等待运行' : '模型执行进度'}</strong><span role="status">{finishedCount} / {batch.cases.length} 个用例已有执行结果{failedCount ? ` · ${failedCount} 个系统失败` : ''}</span><progress aria-label="测评执行进度" max={Math.max(1, batch.cases.length)} value={finishedCount} /><small>固定快照 {batch.snapshotHash.slice(0, 12)} · {String(batch.executionProfile?.provider || '使用 Harness 当前配置')} / {String(batch.executionProfile?.model || '运行时解析模型')}</small>{job ? <small>任务 {job.jobId} · {({ queued: '排队中', running: '运行中', 'cancel-requested': '等待取消', cancelled: '已取消', failed: '失败', completed: '已完成' } as AnyRecord)[job.status] || job.status}</small> : null}</div><div className="gate-page-actions"><Button variant="primary" onClick={() => requestSwitch(() => void runBatch())} disabled={!api || mutationBusy || executionBusy || batch.status === 'stale'}>{run.busy ? '提交中…' : batch.status === 'pending' ? '运行测评' : batch.status === 'cancelled' ? '继续运行' : '重新运行'}</Button><Button onClick={cancelBatch} disabled={!api || mutationBusy || !executionBusy || job?.status === 'cancel-requested'}>{cancel.busy || job?.status === 'cancel-requested' ? '正在取消…' : '取消运行'}</Button><Button onClick={() => requestSwitch(() => void rerunFailedCases())} disabled={!api || mutationBusy || executionBusy || batch.status === 'stale' || failedCount === 0}>{rerun.busy ? '重新排队中…' : '仅重跑失败用例'}</Button></div></section>
+      <section className="context-belt" aria-label="固定批次证据带"><article className="context-stage"><div className="context-kicker"><span>01 · 测试快照</span><StatusPill status="ready" /></div><h2>{batch.skillSnapshot?.title || batch.skillId}</h2><p className="gate-mono">sha256: {batch.snapshotHash.slice(0, 16)}… · {batch.cases.length} 个用例</p></article><article className="context-stage"><div className="context-kicker"><span>02 · 运行环境</span><StatusPill status={batch.productionAligned === true ? 'ready' : 'blocked'} /></div><h2>{String(batch.executionProfile?.model || 'Harness 模型')}</h2><p>{String(batch.executionProfile?.provider || 'Provider 未记录')} · {batch.productionAligned === true ? '生产对齐' : '尚未证明生产对齐'}</p></article><article className="context-stage"><div className="context-kicker"><span>03 · 标注进度</span><StatusPill status={batch.cases.every(item => item.grade && !item.systemError) ? 'completed' : 'unannotated'} /></div><h2>{batch.cases.filter(item => item.grade && !item.systemError).length}/{batch.cases.length} 已标注</h2><p>{batch.accuracy && batch.accuracy.denominator > 0 ? `主准确率 ${Math.round(batch.accuracy.value * 100)}%` : '等待有效标注'} · {batch.status === 'stale' ? '旧快照' : '当前批次'}</p></article></section>
+      <div className={`gate-notice ${batch.status === 'stale' ? 'warning' : batch.status === 'failed' ? 'error' : ''}`}><strong>{batch.status === 'failed' ? '模型运行失败。' : batch.status === 'stale' ? '批次已过期。' : '当前用例来自固定批次快照。'}</strong> {batchNotice}{batch.status === 'stale' ? <Button onClick={() => requestSwitch(() => { setSelectedSkillId(batch.skillId); setShowCreate(true) })}>用最新版新建测评</Button> : null}</div>
+      <section className="gate-work-belt evaluation-run-toolbar" aria-label="测评运行操作"><div className="gate-belt-stage"><strong>{executionBusy ? '模型执行中' : batch.status === 'pending' ? '等待运行' : '模型执行进度'}</strong><span role="status">{finishedCount} / {batch.cases.length} 个用例已有执行结果{failedCount ? ` · ${failedCount} 个系统失败` : ''}</span><progress aria-busy={executionBusy || run.busy || rerun.busy} aria-label="测评执行进度" max={Math.max(1, batch.cases.length)} value={finishedCount} /><small>固定快照 {batch.snapshotHash.slice(0, 12)} · {String(batch.executionProfile?.provider || '使用 Harness 当前配置')} / {String(batch.executionProfile?.model || '运行时解析模型')}</small>{job ? <small>任务 {job.jobId} · {({ queued: '排队中', running: '运行中', 'cancel-requested': '等待取消', cancelled: '已取消', failed: '失败', completed: '已完成' } as AnyRecord)[job.status] || job.status}</small> : null}</div><div className="gate-page-actions"><Button loading={run.busy || executionBusy} variant="primary" onClick={() => requestSwitch(() => void runBatch())} disabled={!api || mutationBusy || executionBusy || batch.status === 'stale'}>{run.busy ? '提交中…' : executionBusy ? '运行中…' : batch.status === 'pending' ? '运行测评' : batch.status === 'cancelled' ? '继续运行' : '重新运行'}</Button><Button loading={cancel.busy} onClick={cancelBatch} disabled={!api || mutationBusy || !executionBusy || job?.status === 'cancel-requested'}>{cancel.busy || job?.status === 'cancel-requested' ? '正在取消…' : '取消运行'}</Button><Button loading={rerun.busy} onClick={() => requestSwitch(() => void rerunFailedCases())} disabled={!api || mutationBusy || executionBusy || batch.status === 'stale' || failedCount === 0}>{rerun.busy ? '重新排队中…' : '仅重跑失败用例'}</Button></div></section>
       {job?.error ? <div className="gate-notice error" role="alert"><strong>后台任务失败。</strong> {safeError(job.error)} {job.error.code ? <code>{job.error.code}</code> : null}</div> : null}
       {activeView === 'overview' ? <section className="gate-batch-picker-panel" aria-label="批次固定信息"><dl className="fact-list"><div><dt>Skill</dt><dd>{batch.skillSnapshot?.title || batch.skillId}</dd></div><div><dt>完整快照哈希</dt><dd className="gate-mono">{batch.snapshotHash}</dd></div><div><dt>解析规则</dt><dd>{batch.ruleSnapshot ? `${batch.ruleSnapshot.ruleId} · v${batch.ruleSnapshot.version}` : '直接固定用例，无解析规则'}</dd></div><div><dt>模型配置</dt><dd><pre>{prettyValue(batch.executionProfile)}</pre></dd></div><div><dt>创建时间</dt><dd>{batch.createdAt}</dd></div><div><dt>更新时间</dt><dd>{batch.updatedAt}</dd></div></dl></section> : null}
       {activeView === 'annotation' ? <div className="annotation-wrap"><section className="annotation-shell" aria-label="用例标注工作面">
-        <aside className="case-rail" aria-label="批次用例"><header className="case-rail-head"><small>批次用例</small><h2>当前 {currentCase ? batch.cases.findIndex(item => item.caseId === currentCase.caseId) + 1 : 0} / {batch.cases.length}</h2><span className="gate-mono">{batch.evaluationId}</span></header>
-          <ul className="case-list">{batch.cases.map((testCase, index) => <li key={testCase.caseId}><button type="button" className={`case-button ${testCase.caseId === currentCase?.caseId ? 'is-selected' : ''}`} aria-pressed={testCase.caseId === currentCase?.caseId} onClick={() => requestSwitch(() => { setFocusedCaseId(testCase.caseId); annotate.clear() })}><span className="case-index">{String(index + 1).padStart(2, '0')}</span><span className="case-copy"><strong>{testCase.source?.filename || testCase.caseId}</strong><small>{testCase.caseId} · {testCase.source?.region || '固定输入'}</small></span><StatusPill status={testCase.systemError ? 'blocked' : testCase.grade || (testCase.actual !== undefined ? 'candidate' : 'pending')} /></button></li>)}</ul>
-        </aside>
+        <ResizableRail label="调整用例列表宽度"><aside className="case-rail" aria-label="批次用例"><header className="case-rail-head"><small>批次用例</small><h2>当前 {currentCase ? batch.cases.findIndex(item => item.caseId === currentCase.caseId) + 1 : 0} / {batch.cases.length}</h2><span className="gate-mono">{batch.evaluationId}</span></header>
+          <ul className="case-list">{batch.cases.map((testCase, index) => <li key={testCase.caseId}><button type="button" className={`case-button ${testCase.caseId === currentCase?.caseId ? 'is-selected' : ''}`} title={testCase.source?.filename || testCase.caseId} aria-pressed={testCase.caseId === currentCase?.caseId} onClick={() => requestSwitch(() => { setFocusedCaseId(testCase.caseId); annotate.clear() })}><span className="case-index">{String(index + 1).padStart(2, '0')}</span><span className="case-copy"><strong>{testCase.source?.filename || testCase.caseId}</strong><small>{testCase.caseId} · {testCase.source?.region || '固定输入'}</small></span><StatusPill status={testCase.systemError ? 'blocked' : testCase.grade || (testCase.actual !== undefined ? 'candidate' : 'pending')} /></button></li>)}</ul>
+        </aside></ResizableRail>
         <div className="case-pane">{currentCase ? <>
           <header className="case-head"><div><small>用例 {currentCase.caseId} · Skill {batch.skillId}</small><h2 id="case-title" tabIndex={-1}>{currentCase.source?.filename ? `${currentCase.source.filename}${currentCase.source.row ? ` · 第 ${currentCase.source.row} 行` : ''}` : currentCase.caseId}</h2></div><div><StatusPill status={currentCase.systemError ? 'blocked' : currentCase.grade || (currentCase.actual !== undefined ? 'candidate' : 'pending')} /><StatusPill status={currentCase.traceId ? 'ready' : 'empty'} /></div></header>
           <EvaluationEvidence testCase={currentCase} onOpenTrace={() => currentCase.traceId ? openTrace(currentCase.traceId) : onNotice('当前用例还没有执行 Trace')} />
-          <EvaluationWorkspace key={`${batch.evaluationId}:${currentCase.caseId}:${annotationRevision}`} testCase={currentCase} onAnnotate={(grade, issueLocation, correction, goNext) => annotateCase(currentCase, grade, issueLocation, correction, goNext)} onDirtyChange={dirtyChanged} busy={annotate.busy} disabled={executionBusy || !api || currentCase.actual === undefined || Boolean(currentCase.systemError)} error={annotate.error} />
+          <EvaluationWorkspace key={`${batch.evaluationId}:${currentCase.caseId}:${annotationRevision}`} testCase={currentCase} onFinish={() => requestSwitch(() => { setOutcomeMessage(''); setSelectedId(''); setFocusedCaseId(''); setShowCreate(false) })} hasNext={batch.cases.some(item => item.caseId !== currentCase.caseId && !item.grade && item.actual !== undefined && !item.systemError)} onAnnotate={(grade, issueLocation, correction, goNext) => annotateCase(currentCase, grade, issueLocation, correction, goNext)} onDirtyChange={dirtyChanged} busy={annotate.busy} disabled={executionBusy || !api || currentCase.actual === undefined || Boolean(currentCase.systemError)} error={annotate.error} />
         </> : <EmptyState title="没有可标注用例" description="尚未返回用例数据。" />}</div>
       </section></div> : null}
       <EvaluationAccuracy batch={batch} />
       {activeView === 'suggestions' ? <section className="sm-suggestions gate-suggestions"><header><div><h2>证据驱动优化建议</h2><p>依据已保存的错误标注与修正内容生成候选；应用后当前批次将过期。</p></div><Button variant="quiet" onClick={generateSuggestions} disabled={optimize.busy || executionBusy || !api || batch.status === 'stale'}>{optimize.busy ? '生成中…' : suggestions.length ? '重新生成' : '生成建议'}</Button></header>{suggestions.length ? suggestions.map(suggestion => <div className="sm-suggestion-row" key={suggestion.suggestionId}><div><strong>{suggestion.path}</strong><small>{String(suggestion.before)} → {String(suggestion.after)}</small></div><Button variant="quiet" onClick={() => requestSwitch(() => void applyOneSuggestion(suggestion))} disabled={applySuggestion.busy || executionBusy || batch.status === 'stale'}>应用并使批次过期</Button></div>) : <p>暂无优化建议。先完成错误用例的人工标注，再生成可审阅的文件修改。</p>}</section> : null}
       <footer className="sm-eval-footer gate-eval-footer"><Button variant="quiet" onClick={() => requestSwitch(() => void generateSuggestions())} disabled={optimize.busy || executionBusy || !api || batch.status === 'stale'}>{optimize.busy ? '生成中…' : '生成优化建议'}</Button><button type="button" className="sm-link" onClick={() => requestSwitch(() => onNavigate('skills', { skillId: batch.skillId }))}>回到 Skill 编辑 →</button><button type="button" className="sm-link" onClick={() => openTrace()}>查看测评 Trace →</button></footer>
     </>}
-    {pendingChange ? <div className="sm-modal-backdrop"><section className="sm-modal" role="dialog" aria-modal="true" aria-labelledby="annotation-discard-title"><h2 id="annotation-discard-title">标注还未保存</h2><p>继续切换会丢弃当前用例的临时标注，已保存结果不会改变。</p><div><Button onClick={() => setPendingChange(undefined)}>继续标注</Button><Button variant="danger" onClick={() => { const action = pendingChange; setPendingChange(undefined); dirtyChanged(false); setAnnotationRevision(value => value + 1); action() }}>放弃修改并切换</Button></div></section></div> : null}
+    {pendingChange ? <div className="sm-modal-backdrop"><section className="sm-modal" role="dialog" aria-modal="true" aria-labelledby="annotation-discard-title"><h2 id="annotation-discard-title">内容还未保存</h2><p>继续切换会丢弃当前表单的临时修改，已保存结果不会改变。</p><div><Button onClick={() => setPendingChange(undefined)}>继续标注</Button><Button variant="danger" onClick={() => { const action = pendingChange; setPendingChange(undefined); dirtyChanged(false); setCreationDirty(false); setAnnotationRevision(value => value + 1); action() }}>放弃修改并切换</Button></div></section></div> : null}
   </div>
 }
 
 function EvaluationEvidence({ testCase, onOpenTrace }: { testCase: EvaluationCase; onOpenTrace: () => void }): React.ReactElement {
-  const input = prettyValue(testCase.input)
-  const expected = testCase.expected === undefined ? '未提供期望值' : prettyValue(testCase.expected)
+  const input = typeof testCase.input === 'string' ? testCase.input : prettyValue(testCase.input)
+  const expected = testCase.expected === undefined ? '未提供参考答案，请根据业务规则判断模型结果。' : typeof testCase.expected === 'string' ? testCase.expected : prettyValue(testCase.expected)
   const actual = testCase.systemError ? `系统失败：${testCase.systemError.message}` : testCase.actual === undefined ? '等待 Harness 模型运行' : prettyValue(testCase.actual)
   const actualTone = testCase.systemError ? 'error' : testCase.actual === undefined ? 'warning' : 'success'
-  return <section className="evidence-ledger" aria-label="用例证据"><article className="evidence-column"><header><span className="evidence-index">01</span><div><small>固定输入</small><h2>原始业务记录</h2></div><span className="gate-status status info">Host</span></header><div className="result-body"><small>输入</small><pre className="code-evidence">{input}</pre></div><dl className="fact-list">{testCase.source ? <><div><dt>来源文件</dt><dd>{testCase.source.filename || '—'}</dd></div><div><dt>区域</dt><dd>{testCase.source.region || '—'}</dd></div><div><dt>行号</dt><dd>{testCase.source.row ?? '—'}</dd></div></> : <div><dt>来源</dt><dd>手工固定用例</dd></div>}</dl></article><article className="evidence-column model-result"><header><span className="evidence-index">02</span><div><small>模型结果</small><h2>{testCase.actualOrigin === 'harness' ? 'Harness 返回' : '尚未运行'}</h2></div><StatusPill status={actualTone === 'error' ? 'blocked' : actualTone === 'warning' ? 'pending' : 'completed'} /></header><div className="result-body"><small>实际值</small><pre className="code-evidence">{actual}</pre><small>期望值</small><pre className="code-evidence">{expected}</pre></div>{testCase.systemError ? <div className="result-rationale error"><small>{testCase.systemError.code}</small><p>{testCase.systemError.message}</p></div> : null}</article><article className="evidence-column trace-summary"><header><span className="evidence-index">03</span><div><small>Trace 摘要</small><h2>{testCase.traceId ? '已关联执行证据' : '尚无关联 Trace'}</h2></div><Button variant="quiet" onClick={onOpenTrace} disabled={!testCase.traceId}>打开顺序摘要</Button></header>{testCase.traceId ? <><dl className="fact-list"><div><dt>Trace ID</dt><dd className="gate-mono">{testCase.traceId}</dd></div><div><dt>来源</dt><dd>Host evaluation worker</dd></div><div><dt>正文</dt><dd>按采集策略展示</dd></div></dl><p className="evidence-foot">Trace 由 Host 在模型用例完成后写入运行 SQLite。</p></> : <div className="empty-region"><div><h3>运行后自动关联</h3><p>完成一次真实 Harness 模型调用后，Host 会把 traceId 写回当前用例。</p></div></div>}</article></section>
+  return <section className="evidence-ledger" aria-label="用例证据"><article className="evidence-column"><header><span className="evidence-index">01</span><div><small>固定输入</small><h2>原始业务记录</h2></div><span className="gate-status status info">Host</span></header><div className="result-body"><small>输入</small><pre className="code-evidence">{input}</pre></div><dl className="fact-list">{testCase.source ? <><div><dt>来源文件</dt><dd>{testCase.source.filename || '—'}</dd></div><div><dt>区域</dt><dd>{testCase.source.region || '—'}</dd></div><div><dt>行号</dt><dd>{testCase.source.row ?? '—'}</dd></div></> : <div><dt>来源</dt><dd>手工固定用例</dd></div>}</dl></article><article className="evidence-column model-result"><header><span className="evidence-index">02</span><div><small>模型结果</small><h2>{testCase.actualOrigin === 'harness' ? 'Harness 返回' : '尚未运行'}</h2></div><StatusPill status={actualTone === 'error' ? 'blocked' : actualTone === 'warning' ? 'pending' : 'completed'} /></header><div className="result-body"><small>模型返回结果</small><pre className="code-evidence">{actual}</pre><small>参考答案</small><pre className="code-evidence">{expected}</pre></div>{testCase.systemError ? <div className="result-rationale error"><small>{testCase.systemError.code}</small><p>{testCase.systemError.message}</p></div> : null}</article><article className="evidence-column trace-summary"><header><span className="evidence-index">03</span><div><small>Trace 摘要</small><h2>{testCase.traceId ? '已关联执行证据' : '尚无关联 Trace'}</h2></div><Button variant="quiet" onClick={onOpenTrace} disabled={!testCase.traceId}>打开顺序摘要</Button></header>{testCase.traceId ? <><dl className="fact-list"><div><dt>Trace ID</dt><dd className="gate-mono">{testCase.traceId}</dd></div><div><dt>来源</dt><dd>Host evaluation worker</dd></div><div><dt>正文</dt><dd>按采集策略展示</dd></div></dl><p className="evidence-foot">Trace 由 Host 在模型用例完成后写入运行 SQLite。</p></> : <div className="empty-region"><div><h3>运行后自动关联</h3><p>完成一次真实 Harness 模型调用后，Host 会把 traceId 写回当前用例。</p></div></div>}</article></section>
 }
 
-function EvaluationWorkspace({ testCase, onAnnotate, onDirtyChange, busy, disabled, error }: { testCase: EvaluationCase; onAnnotate: (grade: string, issueLocation?: string, correction?: string, goNext?: boolean) => Promise<boolean>; onDirtyChange: (dirty: boolean) => void; busy: boolean; disabled?: boolean; error?: string }): React.ReactElement {
+export function EvaluationWorkspace({ testCase, onFinish, hasNext, onAnnotate, onDirtyChange, busy, disabled, error }: { testCase: EvaluationCase; onFinish: () => void; hasNext: boolean; onAnnotate: (grade: string, issueLocation?: string, correction?: string, goNext?: boolean) => Promise<boolean>; onDirtyChange: (dirty: boolean) => void; busy: boolean; disabled?: boolean; error?: string }): React.ReactElement {
+  const [editing, setEditing] = useState(!testCase.grade)
   const [grade, setGrade] = useState(testCase.grade || '')
   const [issueLocation, setIssueLocation] = useState(testCase.issueLocation || '')
   const [correction, setCorrection] = useState(testCase.correction || '')
   const [formError, setFormError] = useState('')
+  const [savedMessage, setSavedMessage] = useState('')
+  const locked = !editing && Boolean(testCase.grade || savedMessage)
   const serverValues = JSON.stringify([testCase.grade || '', testCase.issueLocation || '', testCase.correction || ''])
   const formValues = JSON.stringify([grade, issueLocation, correction])
   const baseline = useRef(serverValues)
@@ -611,17 +667,19 @@ function EvaluationWorkspace({ testCase, onAnnotate, onDirtyChange, busy, disabl
     // Polling must not overwrite unsaved human facts. If the form was clean,
     // adopt newly returned server values; otherwise keep the user's input.
     if (baseline.current === formValues && baseline.current !== serverValues) {
-      setGrade(testCase.grade || ''); setIssueLocation(testCase.issueLocation || ''); setCorrection(testCase.correction || '')
+      setGrade(testCase.grade || ''); setIssueLocation(testCase.issueLocation || ''); setCorrection(testCase.correction || ''); setEditing(!testCase.grade); setSavedMessage('')
     }
     baseline.current = serverValues
   }, [serverValues])
   useEffect(() => { onDirtyChange(formValues !== baseline.current) }, [formValues, serverValues, onDirtyChange])
   const save = async (goNext: boolean) => {
     if (!grade) { setFormError('请选择正确、错误或无法判断。'); return }
-    if (disabled || busy) return
-    setFormError('')
+    if (disabled || busy || locked) return
+    setFormError(''); setSavedMessage('')
     const saved = await onAnnotate(grade, issueLocation.trim() || undefined, correction.trim() || undefined, goNext)
     if (saved) {
+      setEditing(false)
+      setSavedMessage(goNext && !hasNext ? '本条标注已保存，已没有可继续标注的记录。可返回列表查看测评进度；执行失败的记录需重跑后再处理。' : '标注已保存。需要修改时，请点击“重新编辑标注”。')
       baseline.current = JSON.stringify([grade, issueLocation.trim(), correction.trim()])
       setIssueLocation(issueLocation.trim()); setCorrection(correction.trim()); onDirtyChange(false)
     }
@@ -630,10 +688,10 @@ function EvaluationWorkspace({ testCase, onAnnotate, onDirtyChange, busy, disabl
     <header className="annotation-head"><div><small>人工事实 · {testCase.caseId}</small><h2 id="annotation-title">整体标注</h2></div><p>正确数 /（正确数 + 错误数）为主准确率；无法判断单列。</p></header>
     <div className="annotation-form">
       {disabled ? <p className="gate-notice">{busy ? '正在保存。' : testCase.systemError ? '该用例为系统失败，重跑成功后再标注模型结果。' : testCase.actual === undefined ? '尚无模型结果，请先运行测评。' : '运行期间暂不能修改人工标注。'}</p> : null}
-      <fieldset className="grade-fieldset" disabled={busy || disabled}><legend>选择模型结果的整体判断</legend><div className="grade-options">{[['correct', '正确', '计入准确率分子'], ['incorrect', '错误', '计入分母并补充证据'], ['unknown', '无法判断', '不进入准确率分母']].map(([value, label, helper]) => <label className="grade-option" key={value}><span className="radio-control"><input type="radio" name={`grade-${testCase.caseId}`} value={value} checked={grade === value} onChange={() => { setGrade(value); setFormError('') }} /><i aria-hidden="true" /></span><span><strong>{label}</strong><small>{helper}</small></span></label>)}</div></fieldset>
-      {grade === 'incorrect' ? <section className="incorrect-details"><header><div><small>错误标注的后续优化依据</small><h3>问题位置与正确内容</h3></div><StatusPill status="blocked" /></header><label className="correction-field">问题位置<input value={issueLocation} disabled={busy || disabled} placeholder="例如 SKILL.md#规则分支；可填写多个位置" onChange={event => setIssueLocation(event.target.value)} /></label><label className="correction-field">正确内容<textarea value={correction} disabled={busy || disabled} rows={4} placeholder="填写可供后续优化核对的正确结论、规则或依据" onChange={event => setCorrection(event.target.value)} /></label><p>输入解析问题应转到业务场景的 Excel 解析规则修复。</p></section> : null}
+      <fieldset className="grade-fieldset" disabled={busy || disabled || locked}><legend>选择模型结果的整体判断</legend><div className="grade-options">{[['correct', '正确', '计入准确率分子'], ['incorrect', '错误', '计入分母并补充证据'], ['unknown', '无法判断', '不进入准确率分母']].map(([value, label, helper]) => <label className="grade-option" key={value}><span className="radio-control"><input type="radio" name={`grade-${testCase.caseId}`} value={value} checked={grade === value} onChange={() => { setGrade(value); setFormError(''); setSavedMessage('') }} /><i aria-hidden="true" /></span><span><strong>{label}</strong><small>{helper}</small></span></label>)}</div></fieldset>
+      {grade === 'incorrect' ? <section className="incorrect-details"><header><div><small>错误标注的后续优化依据</small><h3>问题位置与正确内容</h3></div><StatusPill status="blocked" /></header><label className="correction-field">问题位置<input value={issueLocation} disabled={busy || disabled || locked} placeholder="例如 SKILL.md#规则分支；可填写多个位置" onChange={event => setIssueLocation(event.target.value)} /></label><label className="correction-field">正确内容<textarea value={correction} disabled={busy || disabled || locked} rows={4} placeholder="填写可供后续优化核对的正确结论、规则或依据" onChange={event => setCorrection(event.target.value)} /></label><p>输入解析问题应转到业务场景的 Excel 解析规则修复。</p></section> : null}
       {formError || error ? <div className="form-error" role="alert"><strong>{formError ? '标注未保存。' : '写入失败。'}</strong><span>{formError || error}</span></div> : null}
-      <div className="annotation-actions"><Button variant="quiet" onClick={() => void save(false)} disabled={busy || disabled || !grade}>{busy ? '保存中…' : '仅保存标注'}</Button><Button variant="primary" onClick={() => void save(true)} disabled={busy || disabled || !grade}>{busy ? '保存中…' : '保存并下一条'}</Button></div>
+      <div className="sm-annotation-result" role="status" aria-live="polite">{locked ? <><strong>已保存 · {{ correct: '正确', incorrect: '错误', unknown: '无法判断' }[grade]}</strong><p>{savedMessage || '当前显示已保存的标注，选择项已锁定。'}</p><div className="annotation-actions"><Button disabled={busy || disabled} onClick={() => { setEditing(true); setSavedMessage(''); setFormError('') }}>重新编辑标注</Button><Button variant="quiet" onClick={onFinish}>返回测评列表</Button></div></> : <><span>{busy ? '正在保存标注，请稍候…' : editing && testCase.grade ? '正在重新编辑；保存后更新标注结果。' : '判断后保存，结果会保留在此测评中。'}</span><div className="annotation-actions"><Button loading={busy} variant="quiet" onClick={() => save(false)} disabled={busy || disabled || !grade}>{busy ? '保存中…' : '仅保存标注'}</Button><Button loading={busy} variant="primary" onClick={() => save(true)} disabled={busy || disabled || !grade}>{busy ? '保存中…' : hasNext ? '保存并下一条' : '保存并完成'}</Button>{testCase.grade ? <Button disabled={busy} onClick={() => { setGrade(testCase.grade || ''); setIssueLocation(testCase.issueLocation || ''); setCorrection(testCase.correction || ''); setEditing(false); onDirtyChange(false) }}>取消编辑</Button> : null}</div></>}</div>
     </div>
   </section>
 }
@@ -710,10 +768,10 @@ export function TracesPage({ api, refresh, initialSkillId, initialTraceId, initi
   const busy = protect.busy || retain.busy || clear.busy
   if (!selectedId) return <div className="sm-page trace-page trace-list-page">
     <PageIntro eyebrow="OBSERVABILITY" title="Trace 追踪" description="按来源、状态和对象查找真实执行链路，选择后进入独立流程详情。" actions={<><Button onClick={list.reload} disabled={list.loading}>刷新 Trace</Button><Button onClick={writeSample} disabled={!api}>写入测试 Trace</Button>{initialEvaluationId && initialCaseId ? <Button variant="primary" onClick={() => onNavigate('evaluations', { skillId: initialSkillId, evaluationId: initialEvaluationId, caseId: initialCaseId })}>返回用例标注</Button> : null}</>} />
-    <section className="trace-toolbar" aria-label="Trace 列表筛选"><div className="toolbar-tools">
+    <section className="trace-toolbar sm-filter-form" aria-label="Trace 列表筛选"><div className="toolbar-tools">
       <label className="sm-visually-hidden" htmlFor="trace-search">搜索 Trace</label><input id="trace-search" className="search-field" type="search" placeholder="搜索 trace、span 名称或 Skill" value={search} onChange={event => setSearch(event.target.value)} />
-      <select className="filter-select" aria-label="来源筛选" value={source} onChange={event => setSource(event.target.value)}><option value="">全部来源</option><option value="production">生产</option><option value="harness-native">Harness</option><option value="workbench-test">测试</option></select>
-      <select className="filter-select" aria-label="状态筛选" value={status} onChange={event => setStatus(event.target.value)}><option value="">全部状态</option><option value="ok">正常</option><option value="unset">未设置</option><option value="error">异常</option></select>
+      <WorkbenchSelect className="filter-select" aria-label="来源筛选" value={source} onChange={event => setSource(event.target.value)}><option value="">全部来源</option><option value="production">生产</option><option value="harness-native">Harness</option><option value="workbench-test">测试</option></WorkbenchSelect>
+      <WorkbenchSelect className="filter-select" aria-label="状态筛选" value={status} onChange={event => setStatus(event.target.value)}><option value="">全部状态</option><option value="ok">正常</option><option value="unset">未设置</option><option value="error">异常</option></WorkbenchSelect>
       <label className="sm-check-label"><input type="checkbox" checked={unlinked} onChange={event => setUnlinked(event.target.checked)} />未关联 Skill</label>
       {from || until ? <span className="trace-time-filter">时间范围：{from ? formatTraceTime(from) : '不限开始'} — {until ? formatTraceTime(until) : '不限结束'}<Button variant="quiet" onClick={() => { setFrom(''); setUntil('') }}>清除时间范围</Button></span> : null}
       <Button variant="quiet" onClick={clearFilters}>清除筛选</Button>
@@ -740,8 +798,8 @@ export function TracesPage({ api, refresh, initialSkillId, initialTraceId, initi
       {evaluation.error ? <InlineError message={'固定批次读取失败：' + evaluation.error} onRetry={evaluation.reload} /> : null}
       {batch ? <details className="trace-execution-profile"><summary>固定模型与生产执行配置 · {String(batch.executionProfile.provider || '未记录 Provider')} / {String(batch.executionProfile.model || '未记录模型')}</summary><pre className="code-evidence">{prettyValue(batch.executionProfile)}</pre></details> : null}
       <div className={'gate-notice ' + (trace.status === 'error' ? 'error' : trace.incomplete ? 'warning' : '')}><strong>{trace.status === 'error' ? '链路包含异常。' : trace.incomplete ? '链路仍在补齐。' : 'Trace 已从 Host 同步。'}</strong> {trace.incomplete ? '已保留缺父节点的孤立 Span，不猜测连接。' : '流程图与顺序列表来自同一份 Span；选择节点查看证据。'}</div>
-      <section className="trace-toolbar" aria-label="Trace 视图与节点筛选"><div className="view-tabs" role="tablist" aria-label="Trace 视图">{(['overview', 'full', 'sequence'] as const).map((id, index) => <button className="view-tab" type="button" role="tab" key={id} aria-selected={view === id} onClick={() => setView(id)}>{['流程总览', '完整链路', '顺序列表'][index]}</button>)}</div>
-        <div className="toolbar-tools"><label className="sm-visually-hidden" htmlFor="node-search">搜索节点</label><input className="search-field" id="node-search" type="search" placeholder="搜索节点名称" value={nodeSearch} onChange={event => setNodeSearch(event.target.value)} /><select className="filter-select" aria-label="节点类型筛选" value={nodeType} onChange={event => setNodeType(event.target.value)}><option value="all">全部类型</option>{[...new Set(allNodes.map(node => traceSpanType(node)))].map(type => <option key={type} value={type}>{type}</option>)}</select></div>
+      <section className="trace-toolbar sm-filter-form" aria-label="Trace 视图与节点筛选"><div className="view-tabs" role="tablist" aria-label="Trace 视图">{(['overview', 'full', 'sequence'] as const).map((id, index) => <button className="view-tab" type="button" role="tab" key={id} aria-selected={view === id} onClick={() => setView(id)}>{['流程总览', '完整链路', '顺序列表'][index]}</button>)}</div>
+        <div className="toolbar-tools"><label className="sm-visually-hidden" htmlFor="node-search">搜索节点</label><input className="search-field" id="node-search" type="search" placeholder="搜索节点名称" value={nodeSearch} onChange={event => setNodeSearch(event.target.value)} /><WorkbenchSelect className="filter-select" aria-label="节点类型筛选" value={nodeType} onChange={event => setNodeType(event.target.value)}><option value="all">全部类型</option>{[...new Set(allNodes.map(node => traceSpanType(node)))].map(type => <option key={type} value={type}>{type}</option>)}</WorkbenchSelect></div>
       </section>
       <p className="trace-narrow-notice">当前宽度使用等价顺序列表与只读节点摘要；桌面宽度可查看完整流程图。</p>
       <section className={'trace-workspace' + (inspectorOpen ? ' has-inspector' : '')} aria-label="Trace 流程与节点证据">

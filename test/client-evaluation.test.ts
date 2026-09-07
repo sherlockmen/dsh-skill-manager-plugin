@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { chooseOption } from './select-helpers.js'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -87,6 +88,26 @@ describe('live evaluation controls', () => {
     expect(container.querySelector('.context-belt')?.textContent).not.toContain('主准确率 0%')
     expect(container.querySelector('.accuracy-head')?.textContent).not.toContain('0 / 0')
   })
+  it('returns to the list without selecting the first batch again, and completes the last annotation explicitly', async () => {
+    const last = batch(); last.cases = [last.cases[0]]
+    const { render, api } = bench([last])
+    await render()
+    await act(async () => container.querySelector<HTMLInputElement>('input[value="correct"]')!.click())
+    await click('保存并完成')
+    expect(container.querySelector('.sm-annotation-result')?.textContent).toContain('已没有可继续标注')
+    expect(api.evaluationAnnotate).toHaveBeenCalledOnce()
+    const panel = container.querySelector('.annotation-panel')
+    await click('刷新列表')
+    expect(container.querySelector('.annotation-panel')).toBe(panel)
+    expect(container.querySelector('fieldset.grade-fieldset')?.hasAttribute('disabled')).toBe(true)
+    await click('← 测评列表')
+    expect(container.querySelector('h1')?.textContent).toBe('测评中心')
+    expect(container.querySelector('.case-pane')).toBeNull()
+    await click('刷新列表')
+    expect(container.querySelector('.case-pane')).toBeNull()
+    expect(container.querySelectorAll('.batch-option')).toHaveLength(1)
+  })
+
   it('runs a fixed batch through Remote and can request cancellation', async () => {
     const pending = batch('eval-1', 'skill-1', 'pending')
     pending.cases = pending.cases.map(({ actual, actualOrigin, traceId, ...item }) => item)
@@ -142,16 +163,18 @@ describe('live evaluation controls', () => {
     await act(async () => container.querySelector<HTMLInputElement>('input[value="correct"]')!.click())
     await click('仅保存标注')
     expect(container.querySelector('.case-head h2')?.textContent).toBe('case-1')
+    expect(container.querySelector('fieldset.grade-fieldset')?.hasAttribute('disabled')).toBe(true)
+    await click('重新编辑标注')
     await act(async () => container.querySelector<HTMLInputElement>('input[value="incorrect"]')!.click())
     await act(async () => container.querySelectorAll<HTMLButtonElement>('.case-button')[1].click())
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('标注还未保存')
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('内容还未保存')
     await click('继续标注')
     expect(container.querySelector('.case-head h2')?.textContent).toBe('case-1')
     await click('切换批次')
     await act(async () => container.querySelectorAll<HTMLButtonElement>('.batch-option')[1].click())
-    expect(container.querySelector('h1')?.textContent).toContain('eval-1')
+    expect(container.querySelector('.sm-evaluation-identity')?.textContent).toContain('eval-1')
     await click('放弃修改并切换')
-    expect(container.querySelector('h1')?.textContent).toContain('eval-2')
+    expect(container.querySelector('.sm-evaluation-identity')?.textContent).toContain('eval-2')
   })
 
   it('filters by Skill and passes the exact Trace and Skill navigation targets', async () => {
@@ -162,9 +185,11 @@ describe('live evaluation controls', () => {
     expect(onNavigate).toHaveBeenLastCalledWith('traces', { skillId: 'skill-1', evaluationId: 'eval-1', caseId: 'case-1', traceId: 'trace-1' })
     await click('回到 Skill 编辑 →')
     expect(onNavigate).toHaveBeenLastCalledWith('skills', { skillId: 'skill-1' })
-    const filter = container.querySelector<HTMLSelectElement>('select[aria-label="按 Skill 筛选"]')!
-    await act(async () => { filter.value = 'skill-2'; filter.dispatchEvent(new Event('change', { bubbles: true })) })
+    const filter = container.querySelector<HTMLElement>('[role="combobox"][aria-label="按 Skill 筛选"]')!
+    await chooseOption(filter, 'Skill skill-2')
     expect(api.evaluationList).toHaveBeenLastCalledWith({ skillId: 'skill-2' })
-    expect(container.querySelector('h1')?.textContent).toContain('eval-other')
+    expect(container.querySelector('h1')?.textContent).toBe('测评中心')
+    await act(async () => { container.querySelector<HTMLButtonElement>('.batch-option')!.click() })
+    expect(container.querySelector('.sm-evaluation-identity')?.textContent).toContain('eval-other')
   })
 })

@@ -52,11 +52,11 @@ describe('Dashboard facts and actionable quality', () => {
 
   it('distinguishes missing labels and stale evidence, excluding stale batches only from current quality', async () => {
     const { skill } = await evaluated()
-    expect((await service.dashboardGet()).sections.find(section => section.id === 'quality').items[0]).toMatchObject({ status: 'unannotated', labeled: 0 })
+    expect((await service.dashboardGet()).sections.find(section => section.id === 'quality').items[0]).toMatchObject({ status: 'unannotated', labeled: 0, actionLabel: '继续标注' })
     await service.skillSave('save', { skillId: skill.skillId, expectedHash: skill.contentHash, files: { ...skill.files, 'SKILL.md': '# changed' } })
     const stale = await service.dashboardGet()
     expect(stale.sections.find(section => section.id === 'quality').items).toEqual([])
-    expect(stale.sections.find(section => section.id === 'work').items[0]).toMatchObject({ status: 'stale' })
+    expect(stale.sections.find(section => section.id === 'work').items[0]).toMatchObject({ status: 'stale', actionLabel: '用最新版重新测评', createEvaluation: true })
   })
 
   it('surfaces active exception releases and unknown loading but never invents failed Redis delivery', async () => {

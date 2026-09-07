@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-skill-manager-plugin",
   "description": "A local dual-face Skill Manager workbench with model, SQLite, XMind, and Trace probes for DeepSeek Harness",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -36,9 +36,7 @@
     "schemas/**/*.json",
     "assets/**/*",
     "cordis.patch.yml",
-    "docs/local-acceptance.md",
-    "docs/installation.md",
-    "docs/functional-verification-2026-09-07.md",
+    "scripts/read-runtime.py",
     "README.md",
     "NOTICE"
   ],
@@ -84,10 +82,14 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "pnpm run build",
+    "pack:release": "pnpm pack --pack-destination releases"
   },
   "dependencies": {
+    "@radix-ui/react-select": "^2.3.7",
     "exceljs": "4.4.0",
+    "mind-elixir": "5.15.1",
     "yaml": "2.9.0"
   }
 }

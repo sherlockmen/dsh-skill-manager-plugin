@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type AnyRecord = Record<string, any>
 export type RemoteApi = AnyRecord | undefined
@@ -56,12 +56,13 @@ export function useRemoteQuery<T>(api: RemoteApi, method: string, args: any[], f
   const [loading, setLoading] = useState(enabled)
   const [error, setError] = useState<string>()
   const [revision, setRevision] = useState(0)
+  const loaded = useRef<{ api: RemoteApi; method: string; key: string } | undefined>(undefined)
   useEffect(() => {
     let alive = true
     if (!enabled || !api) { setLoading(false); return () => { alive = false } }
     setLoading(true); setError(undefined)
     void callRemote<T>(api, method, args)
-      .then(value => { if (alive) setData(value) })
+      .then(value => { if (alive) { loaded.current = { api, method, key }; setData(value) } })
       .catch(reason => { if (alive) setError(safeError(reason)) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
@@ -69,13 +70,16 @@ export function useRemoteQuery<T>(api: RemoteApi, method: string, args: any[], f
   // args are transport JSON and keeping the key stable avoids a refetch per render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, method, key, enabled, revision])
-  return { data, loading, error, reload: () => setRevision(value => value + 1) }
+  return { data, loading: loading && !(loaded.current?.api === api && loaded.current?.method === method && loaded.current?.key === key), error, reload: () => setRevision(value => value + 1) }
 }
 
 export function useMutation(api: RemoteApi, method: string, onChanged?: () => void): { run: (request?: any, options?: { signal?: AbortSignal; direct?: boolean }) => Promise<any>; busy: boolean; error?: string; clear: () => void } {
   const [busy, setBusy] = useState(false)
+  const inFlight = useRef(false)
   const [error, setError] = useState<string>()
   const run = useCallback(async (request: any = {}, options: { signal?: AbortSignal; direct?: boolean } = {}) => {
+    if (inFlight.current) throw new Error('当前操作正在提交，请等待完成。')
+    inFlight.current = true
     setBusy(true); setError(undefined)
     try {
       // ID/query methods are intentionally direct and have a strict one-argument
@@ -86,7 +90,7 @@ export function useMutation(api: RemoteApi, method: string, onChanged?: () => vo
       onChanged?.(); return value
     } catch (reason) {
       const message = safeError(reason); setError(message); throw reason
-    } finally { setBusy(false) }
+    } finally { inFlight.current = false; setBusy(false) }
   }, [api, method, onChanged])
   return { run, busy, error, clear: () => setError(undefined) }
 }

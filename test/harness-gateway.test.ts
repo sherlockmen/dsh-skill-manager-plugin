@@ -41,6 +41,15 @@ describe.skipIf(!installed)('installed Harness Gateway integration', () => {
     return { ctx, service, gateway, rawGateway }
   }
 
+  it('reads the real DSH default-model service through the settings Gateway', async () => {
+    const { ctx, gateway } = await setup()
+    const { default: DefaultModel } = await importFile(join(harnessRoot, 'packages/core/agent-default-model/lib/index.js'))
+    await ctx.plugin(DefaultModel, { provider: 'native-provider', model: 'native-model' })
+    const result = await gateway.invoke({ namespace: 'skillManager', method: 'settingsGet', args: {} })
+    expect(result.models.source).toBe('dsh-default')
+    expect(result.models.selection).toEqual({ provider: 'native-provider', model: 'native-model' })
+  })
+
   it('derives every SRC method using the same names as the Browser wire descriptors', async () => {
     const { rawGateway } = await setup()
     for (const descriptor of TYPERT_HOST_V1.invocations) {

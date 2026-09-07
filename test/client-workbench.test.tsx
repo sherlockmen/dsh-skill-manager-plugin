@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SkillManagerApp } from '../src/client/index.js'
+import { apply, SkillManagerApp } from '../src/client/index.js'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
@@ -42,6 +42,42 @@ async function edit(value: string) {
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; host?.remove(); vi.restoreAllMocks() })
 
 describe('usable Skill workbench', () => {
+  it('reopens the workbench after native exit without remounting Remote, and removes its launcher on disposal', async () => {
+    const remoteDispose = vi.fn(async () => {})
+    const register = vi.fn(() => vi.fn())
+    const ctx = { remote: { $mount: vi.fn(async () => remoteDispose), skillManager: api() }, slots: { register }, get: () => undefined }
+    const cleanup = await apply(ctx)
+    ;(register.mock.calls[0] as any)[0].inject().onExit()
+    expect(remoteDispose).not.toHaveBeenCalled()
+    const launcher = document.querySelector<HTMLButtonElement>('[data-skill-manager-launcher]')!
+    expect(launcher.textContent).toContain('打开 Skill Manager')
+    launcher.click()
+    expect(register).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-skill-manager-launcher]')).toBeNull()
+    ;(register.mock.calls[1] as any)[0].inject().onExit()
+    await cleanup()
+    expect(remoteDispose).toHaveBeenCalledOnce()
+    expect(document.querySelector('[data-skill-manager-launcher]')).toBeNull()
+  })
+
+  it('opens from the custom preset action and disposes its registration with the plugin', async () => {
+    const remoteDispose = vi.fn(async () => {})
+    const entryDispose = vi.fn()
+    const register = vi.fn(() => vi.fn())
+    const ctx = { remote: { $mount: vi.fn(async () => remoteDispose), skillManager: api() }, slots: { register, inject: vi.fn((_name, install) => { const remove = install(); return () => { remove(); entryDispose() } }) }, get: () => undefined }
+    const cleanup = await apply(ctx)
+    const rootOptions = (register.mock.calls[0] as any)[0]
+    const entryOptions = (register.mock.calls[1] as any)[0]
+    expect(entryOptions.name).toBe('settings.agentPreset.custom.actions')
+    rootOptions.inject().onExit()
+    expect(document.querySelector('[data-skill-manager-launcher]')).toBeNull()
+    entryOptions.inject().open()
+    expect(register).toHaveBeenCalledTimes(3)
+    await cleanup()
+    expect(entryDispose).toHaveBeenCalledOnce()
+    expect(remoteDispose).toHaveBeenCalledOnce()
+  })
+
   it('keeps multiple Skills reachable and guards unsaved navigation and native exit', async () => {
     const service = api(); const exit = await mount(service)
     await click('测试 one')
@@ -72,7 +108,7 @@ describe('usable Skill workbench', () => {
     Object.defineProperty(input, 'files', { value: [file], configurable: true })
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
     expect(service.xmindSample).not.toHaveBeenCalled()
-    expect(service.skillImport).toHaveBeenCalledWith(expect.any(String), { input: 'UEsDBAc=', title: '用户规则' }, undefined)
+    expect(service.skillImport).toHaveBeenCalledWith(expect.any(String), { input: 'UEsDBAc=', title: '用户规则', format: 'package' }, undefined)
     expect(host.querySelector('h1')?.textContent).toBe('用户规则')
   })
 })

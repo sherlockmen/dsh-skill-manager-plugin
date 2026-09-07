@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
@@ -36,6 +37,17 @@ describe('Host v1 workflow', () => {
     await service.start()
   })
 
+  it('persists a human evaluation name and text input, and renames without changing the snapshot', async () => {
+    const { skill } = await service.skillCreate('named-skill', { title: '电仪及公用' })
+    const { evaluation } = await service.evaluationCreate('named-eval', { skillId: skill.skillId, name: '电仪-0907-第1轮', sourceInput: { kind: 'text', text: '设备压力正常' } })
+    expect(evaluation.name).toBe('电仪-0907-第1轮')
+    expect(evaluation.cases[0].input).toBe('设备压力正常')
+    expect(evaluation.cases[0].expected).toBeUndefined()
+    const renamed = await service.evaluationRename('rename', { evaluationId: evaluation.evaluationId, name: '公用验收' })
+    expect(renamed.evaluation).toMatchObject({ name: '公用验收', snapshotHash: evaluation.snapshotHash, cases: evaluation.cases })
+    expect((await service.evaluationList({})).evaluations[0].name).toBe('公用验收')
+  })
+
   afterEach(async () => {
     service.dispose()
     await rm(dataDir, { recursive: true, force: true })
@@ -69,8 +81,8 @@ describe('Host v1 workflow', () => {
     expect(normalizeConfig({ dataDir, otlpPort: 'false' }).otlpPort).toBe(false)
   })
 
-  it('runs a background evaluation, enforces publish readiness, and writes an immutable runtime version', async () => {
-    const { skill } = await service.skillCreate('create-2', { title: '可发布 Skill', files: { 'SKILL.md': '# Skill', 'manifest.yaml': 'required_facts: []', 'rules/decision-tree.yaml': 'root: start' } })
+  it.each(['package', 'markdown'])('runs %s through evaluation, publication and an independent Python runtime reader', async format => {
+    const { skill } = await service.skillCreate('create-2', { title: '可发布 Skill', format, files: { 'SKILL.md': '# Skill' } })
     await service.scenarioCreate('scenario-1', {
       scenarioId: 'scenario-1', name: '省级报表场景', region: 'province', status: 'active', skillIds: [skill.skillId],
       samples: [{ sampleId: 'sample-1', filename: 'report.json', headers: ['a'], rows: [{ a: 1 }], sourceRegions: [], createdAt: new Date().toISOString() }],
@@ -90,6 +102,14 @@ describe('Host v1 workflow', () => {
     expect((await service.releaseCheck(skill.skillId)).status).toBe('ready')
     const published = await service.releasePublish('publish-1', { skillId: skill.skillId })
     expect(published.release.version).toBe('v1')
+    expect(published.release.format).toBe(format)
+    expect(published.release.files).toEqual(skill.files)
+    expect(evaluation.skillSnapshot.format).toBe(format)
+    const loaded = JSON.parse(execFileSync('python3', ['scripts/read-runtime.py', join(dataDir, 'runtime.sqlite'), skill.skillId], { encoding: 'utf8' }))
+    expect(loaded.releaseId).toBe(published.release.releaseId)
+    expect(loaded.format).toBe(format)
+    expect(loaded.files).toEqual(skill.files)
+    if (format === 'markdown') expect(Object.keys(loaded.files)).toEqual(['SKILL.md'])
     expect((await service.runtimeStatus(skill.skillId)).releases[0].version).toBe('v1')
     expect((await service.releaseList(skill.skillId)).releases).toHaveLength(1)
     expect((await service.runtimeStatus(skill.skillId)).notifications.pending).toBe(1)

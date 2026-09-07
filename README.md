@@ -14,11 +14,13 @@ DSH Skill Manager 将 Skill 编辑、业务样例、人工标注、版本发布�
 
 ## 核心能力
 
-- **原生 Skill 编辑：**从空白、复制或 XMind 来源开始，在同一草稿中编辑 Markdown、Manifest 和决策树；模型生成的候选变更需逐项审阅后应用。
+- **原生 Skill 编辑：**从新建思维导图、文字描述、复制或上传 XMind 开始，选择原生三文件包或独立 Markdown Skill；模型生成的候选变更需逐项审阅后应用。
 - **业务样例与测评：**维护业务场景、Excel 解析规则和样例，基于固定 Skill 快照运行模型测评，通过人工标注形成准确率与发布依据。
 - **可追溯的版本管理：**校验发布条件，生成不可变版本，保留审计记录；回滚切换运行端生效指针，不覆盖工作草稿。
 - **节点式 Trace 检查：**统一查看生产、Harness 原生和工作台测试来源的 Trace，沿节点连接检查父子关系、输入输出、耗时和错误。
 - **本地数据与完整工作台：**通过 Dashboard 下钻到待处理对象；使用双 SQLite 持久化业务与运行数据，提供健康检查、成对备份及返回原生界面的入口。
+
+思维导图编辑采用 [Mind Elixir](https://github.com/SSShooter/mind-elixir-core) 5.15.1，支持节点编辑、拖放和撤销重做；全局下拉选择采用 Radix Select。当前本地 Harness 已扩展 Agent 预设的自定义区域，提供 Skill Manager 工作台入口；未包含该插槽的 Harness 版本仍保留返回原生后的悬浮入口。
 
 ## 快速开始
 
@@ -31,32 +33,31 @@ DSH Skill Manager 将 Skill 编辑、业务样例、人工标注、版本发布�
 
 尚未声明最低兼容 Harness 版本。升级或更换 Harness 构建后，请验证插件加载、保存、模型测评和返回原生界面。
 
-### 安装到 Harness
+### 官方插件安装（推荐）
 
-当前可用路径是**构建源码，再通过官方插件命令安装**。先保存工作并完整退出目标 DSH 实例；在能够运行 `dsh` 的终端执行：
+使用已经构建好的 `deepseek-ai-dsh-skill-manager-plugin-1.0.5.tgz`，无需下载源码或在使用者电脑构建。先安装并确认 DSH CLI 可用，然后在安装包所在目录执行：
 
 ```bash
-git clone https://github.com/sherlockmen/dsh-skill-manager-plugin.git
-cd dsh-skill-manager-plugin
+dsh plugin --profile web add ./deepseek-ai-dsh-skill-manager-plugin-1.0.5.tgz
+dsh web
+```
+
+安装只需一次，以后统一执行 **`dsh web`**。它等价于 `dsh --profile web`，启动后自动打开浏览器；停止服务在终端按 Ctrl+C。关闭网页不会停止后台服务。安装机制见 [Harness 官方插件文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.zh.md)。
+
+新安装默认使用用户主目录下的 `.dsh-skill-manager`，不随终端所在目录变化。已有明确的 dataDir 配置或环境变量继续优先。若检测到旧工作目录数据库，程序要求明确选择旧目录后再启动，不会自动搬迁或覆盖。
+
+当前可分发形式是本地预构建安装包，尚未发布 npm 版本或公开下载链接。拿到安装包后即可使用以上官方命令；不能把尚未发布的包名或旧 GitHub 提交当作最新发行版。
+
+“自定义”区域入口要求宿主提供对应扩展。普通官方 DSH 没有此扩展时，返回原生后使用右下角“打开 Skill Manager”入口；使用插件不要求修改 Harness 源码。
+
+### 开发者制作安装包
+
+```bash
 pnpm install --frozen-lockfile
-pnpm run build
-dsh plugin --profile web add "$PWD"
+pnpm run pack:release
 ```
 
-该命令把插件安装到内置 `web` Profile，并登记插件配置层。目录安装使用本地链接，请保留源码目录，不要在安装后移动或删除它。安装机制见 [Harness 官方插件文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.zh.md)。
-
-> 不要直接用本项目包名执行 npm 安装，也不要跳过构建直接安装 GitHub 源码：仓库不包含 `lib/` 产物，目前也没有安装时自动构建的 `prepare` 脚本。
-
-选择一种方式启动：
-
-- **Desktop：**打开 DSH Desktop，选择刚安装的 `web` Profile。
-- **浏览器：**执行以下命令，打开终端当次输出的地址。
-
-```bash
-dsh --profile web --no-open
-```
-
-不要把 `web` 随意改成一个全新 Profile 名：自定义 Profile 可能只有基础层，没有 Web 服务。安装到已有自定义 Profile 时，先确认它包含所需服务。默认不要同时运行 Desktop 和命令行实例，以免 OTLP 端口冲突。
+该命令自动构建并校验 Browser 产物，生成 `releases/` 下的 `.tgz`。仅分发该文件；不携带数据库、凭据、源码工作区或本机验收文档。使用者安装预构建包时无需执行构建脚本。向 npm 或公开 Release 发布是独立步骤，当前尚未执行。
 
 ## 应用预览
 
@@ -90,8 +91,8 @@ dsh --profile web --no-open
 
 1. **检查连接。**在系统设置确认管理库、运行库和模型通道状态。
 2. **编写 Skill。**创建草稿，编辑 `SKILL.md`、Manifest 和决策树；保存后重新打开，确认内容持久化。
-3. **准备测评。**在业务场景中关联 Skill、添加业务样例；使用 Excel 时先确认解析规则和回归结果。
-4. **运行并标注。**创建固定快照的测评批次，核对 Provider / Model，查看模型实际输出和 Trace，再逐条人工标注。自动比对不会代替人工结论。
+3. **准备测评。**在测评中心点击“创建测评”，填写测评名称或业务批次号。直接粘贴待测文本，或导入 `.xlsx`、选择工作表并预览数据；每个非空数据行生成一条记录。参考答案可留空，也可指定 Excel 的参考答案列（该列不会传给模型作为输入）。复杂解析继续使用业务场景样例。
+4. **运行并标注。**创建后点击“运行测评”，查看模型实际输出，再逐条人工判断。保存后选项锁定，需点击“重新编辑标注”才能修改；最后一条保存后显示持续的完成说明，可返回列表。列表展示测评名称、Skill、记录数和创建时间，也支持修改名称。自动比对不会代替人工结论。
 5. **审查并发布。**检查当前草稿、有效测评和生产执行配置是否满足发布条件；发布后查看版本与审计记录。
 
 修改草稿会使旧快照测评过期，需要重新测评。模型调用成功不等于发布条件全部满足；管理端发布成功，也不等于生产应用已经加载该版本。
@@ -111,14 +112,11 @@ React 工作台（Web / Desktop）
   → 插件处理结果、保存测评与 Trace → 工作台展示
 ```
 
-Provider 和 Model 分别按以下优先级解析：
+在 **系统设置 → 模型选择** 中，默认跟随 DSH 默认模型，也可以从 DSH 已配置的模型列表中指定模型。列表与 Provider、API Key、地址均由 DSH 管理，插件只保存选择的 Provider / Model 标识，不维护第二套连接配置。
 
-1. 测评批次冻结的 `executionProfile`。
-2. 插件配置的 `provider` / `model`。
-3. 插件 `productionProfile` 中的 Provider / Model。
-4. DSH 注册列表中的首个 Provider，以及该 Provider 的首个模型。
+新的候选生成、Excel 规则、优化建议和测评使用当前选择；已创建的测评保留冻结的 `executionProfile`。跟随默认时实时读取 DSH 的 `agentDefaultModel.currentSelection()`；仅切换某个聊天的模型不等于修改 DSH 默认模型。保存模型选择立即影响新任务，无需重启。
 
-候选生成从第 2 项开始选择。**DSH 列表首项不是原生聊天当前选择的模型**；切换聊天模型不会修改已创建批次的执行配置。
+旧部署仅在没有 DSH 默认模型且未保存新选择时兼容原插件显式配置，设置页会显示此状态；不再取模型列表第一项作为默认值。`productionProfile` 继续用于生产对齐声明，DSH 默认模型本身不是生产一致性证据。
 
 当前调用的是 **Harness 模型接口，而非完整 Agent 工具循环**。测评将 Skill 文件快照和业务输入组织成提示词，由模型返回结果，再由插件处理和保存；不会创建原生聊天会话来执行多轮工具调用。实现见 [`src/host/service.ts`](src/host/service.ts)。
 
@@ -128,9 +126,9 @@ Provider 和 Model 分别按以下优先级解析：
 
 | 配置项 | 环境变量 | 默认与用途 |
 | --- | --- | --- |
-| `dataDir` | `DSH_SKILL_MANAGER_DATA_DIR` | 启动工作目录下的 `.dsh-skill-manager`；建议固定为绝对路径 |
-| `provider` | `DSH_SKILL_MANAGER_PROVIDER` | 未指定；引用 DSH 已注册的 Provider ID |
-| `model` | `DSH_SKILL_MANAGER_MODEL` | 未指定；引用对应 Provider 的模型 ID |
+| `dataDir` | `DSH_SKILL_MANAGER_DATA_DIR` | 用户主目录下的 `.dsh-skill-manager`；不随启动工作目录变化 |
+| `provider` | `DSH_SKILL_MANAGER_PROVIDER` | 旧部署兼容项；日常使用系统设置中的 DSH 模型选择 |
+| `model` | `DSH_SKILL_MANAGER_MODEL` | 旧部署兼容项；与 provider 配套使用 |
 | `productionProfile` | `DSH_SKILL_MANAGER_PRODUCTION_PROFILE` | 未指定；声明生产执行目标，环境变量使用 JSON 对象 |
 | `otlpPort` | `DSH_SKILL_MANAGER_OTLP_PORT` | `4319`；设为 `false` 关闭接收器 |
 
@@ -140,6 +138,8 @@ Provider 和 Model 分别按以下优先级解析：
 
 - `manager.sqlite`：工作草稿、业务场景、测评、任务与管理审计。
 - `runtime.sqlite`：发布版本、生效指针与 Trace。
+
+Python 应用共享此运行库的实际绝对路径，并按 `runtime_entities` 的 `active-release` → `release-version` 读取发布快照。`format=markdown` 只读取 `files["SKILL.md"]`；缺少 format 的旧版本按 package 处理。可复用 [`scripts/read-runtime.py`](scripts/read-runtime.py)，每个请求开始时读一次并固定快照，缓存以 releaseId / contentHash 为键。只配置相同路径不会自动适配 Python 原有的表结构。
 
 在系统设置查看实际目录并创建双库备份。改变 `dataDir` 不会自动迁移已有数据；两端出现不同列表时，先核对目录，不要删库。旧版数据库升级前会创建 `schema-backups` 快照。
 
@@ -155,7 +155,7 @@ pnpm test
 pnpm run build
 ```
 
-构建同时生成 Host ESM 和 Browser ModuleLoader 产物，并验证最终 Browser 产物中的多行正文与 Markdown。源码测试覆盖草稿、测评、发布、迁移和界面交互；截至 2026-09-07，本机通过 20 个测试文件、117 项测试，不代表全部环境的兼容性保证。
+构建同时生成 Host ESM 和 Browser ModuleLoader 产物，并验证最终 Browser 产物中的多行正文与 Markdown。源码测试覆盖草稿、测评、发布、迁移和界面交互；截至 2026-09-07，本机通过 26 个测试文件、144 项测试，不代表全部环境的兼容性保证。
 
 其中 3 项 Gateway 集成测试需要已构建的 Harness 源码。运行前将 `DSH_HARNESS_ROOT` 设置为该 checkout 的绝对路径；未找到 Harness 时，这 3 项会跳过。纯源码环境的测试通过不等于完整宿主集成验证。
 
@@ -205,7 +205,7 @@ Harness 根据 [`package.json`](package.json) 的声明加载插件，包标识�
 ## 当前边界
 
 - XMind 支持树节点语义；非树关系等内容会标记为不支持，不承诺完整无损往返。
-- 尚未提供 npm 发行、预编译 Release 或插件市场一键安装。
+- 提供本地预构建 `.tgz`，支持官方插件安装命令；尚未发布 npm、公开 Release 或插件市场条目。
 - Docker / Compose、本地模型部署、生产网络与 LangChain / Redis 端到端联调不包含在当前交付中。
 - 当前面向本机或受控内网；不提供独立的多用户权限隔离，不应无保护地暴露到公网。业务输入会发送到所选 Provider，使用前确认其数据处理政策。
 

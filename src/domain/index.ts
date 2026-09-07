@@ -9,7 +9,8 @@ export function contentHash(value: unknown, hash: (input: string) => string): st
 export function validateSkillDraft(draft: SkillDraft, now = new Date().toISOString()): SkillValidation {
   const errors: SkillValidation['errors'] = []
   const files = draft.files ?? ({} as SkillDraft['files'])
-  const requiredFiles = ['SKILL.md', 'manifest.yaml', 'rules/decision-tree.yaml'] as const
+  const requiredFiles = draft.format === 'markdown' ? ['SKILL.md'] : ['SKILL.md', 'manifest.yaml', 'rules/decision-tree.yaml']
+  if (draft.format && !['package', 'markdown'].includes(draft.format)) errors.push({ code: 'skill/invalid-format', path: 'format', message: '不支持的 Skill 格式。' })
   for (const path of requiredFiles) {
     if (typeof files[path] !== 'string' || files[path].trim().length === 0) errors.push({ code: 'skill/missing-file', path, message: `缺少必需文件 ${path}。` })
   }
@@ -18,7 +19,7 @@ export function validateSkillDraft(draft: SkillDraft, now = new Date().toISOStri
   // domain layer makes imports preserve unknown content while preventing it
   // from silently reaching a release.
   for (const path of Object.keys(files)) {
-    if (!requiredFiles.includes(path as typeof requiredFiles[number]) && !path.startsWith('references/')) {
+    if (!requiredFiles.includes(path as typeof requiredFiles[number]) && !(draft.format !== 'markdown' && path.startsWith('references/'))) {
       errors.push({ code: 'skill/unknown-file', path, message: `文件 ${path} 不在 Skill 包契约中；请移除或移动到 references/。` })
     }
   }
