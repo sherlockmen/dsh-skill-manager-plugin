@@ -1,0 +1,17 @@
+packages:
+  - '.'
+
+# esbuild is used as the Host bundler and Vite's native transformer. Allowing
+# its postinstall binary is deterministic and does not execute application
+# code.
+onlyBuiltDependencies:
+  - esbuild
+
+minimumReleaseAgeExclude:
+  - '@types/react-dom@19.2.7'
+  - '@vitest/mocker@5.0.0'
+  - '@vitest/spy@5.0.0'
+  - vitest@5.0.0
+
+allowBuilds:
+  esbuild: true

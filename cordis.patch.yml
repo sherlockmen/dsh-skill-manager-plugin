@@ -1,0 +1,8 @@
+# Skill Manager's profile layer. Keep the Harness service/plugin providers,
+# while the browser contribution owns the visible root surface.
+# The explicit lower priority lets the plugin shadow the shipped AppFrame
+# without disabling the services that power Connection and Host Remote.
+
+- insert:
+    - id: skill-manager
+      name: '@deepseek-ai/dsh-skill-manager-plugin'

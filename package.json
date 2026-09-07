@@ -1,0 +1,93 @@
+{
+  "name": "@deepseek-ai/dsh-skill-manager-plugin",
+  "description": "A local dual-face Skill Manager workbench with model, SQLite, XMind, and Trace probes for DeepSeek Harness",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "import": "./lib/client.js",
+      "default": "./lib/client.js"
+    },
+    "./contracts": {
+      "types": "./lib/contracts/index.d.ts",
+      "import": "./lib/contracts/index.js",
+      "default": "./lib/contracts/index.js"
+    },
+    "./remote": {
+      "types": "./lib/client/remote.d.ts",
+      "import": "./lib/remote.js",
+      "default": "./lib/remote.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "migrations/**/*.sql",
+    "schemas/**/*.json",
+    "assets/**/*",
+    "cordis.patch.yml",
+    "docs/local-acceptance.md",
+    "docs/installation.md",
+    "docs/functional-verification-2026-09-07.md",
+    "README.md",
+    "NOTICE"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "esbuild": "0.28.2",
+    "jsdom": "^30.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0 || ^19.0.0",
+    "react-dom": "^18.2.0 || ^19.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "exceljs": "4.4.0",
+    "yaml": "2.9.0"
+  }
+}

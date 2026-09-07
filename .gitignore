@@ -1,0 +1,44 @@
+# Track only application source, tests, and required build/package inputs.
+/*
+!/.gitignore
+!/src/
+!/test/
+!/scripts/
+!/migrations/
+!/schemas/
+!/package.json
+!/pnpm-lock.yaml
+!/pnpm-workspace.yaml
+!/cordis.patch.yml
+!/index.html
+!/tsconfig.json
+!/tsconfig.node.json
+!/vite.config.ts
+!/vitest.config.ts
+!/NOTICE
+
+# Documentation remains local, including any nested documentation.
+*.md
+*.mdx
+*.rst
+*.pdf
+*.doc
+*.docx
+docs/
+
+# Never commit credentials, local databases, dependencies, or generated output.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.sqlite*
+*.db
+*.db-*
+*.log
+*.tgz
+.DS_Store
+node_modules/
+lib/
+dist/
+coverage/

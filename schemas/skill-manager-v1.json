@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepseek.ai/schemas/dsh-skill-manager/1.json",
+  "title": "DeepSeek Harness Skill Manager v1 RPC",
+  "description": "Versioned JSON envelope used by the Skill Manager Host/Browser boundary. Feature payloads are validated by their endpoint handlers.",
+  "oneOf": [
+    { "$ref": "#/$defs/queryEnvelope" },
+    { "$ref": "#/$defs/mutationEnvelope" }
+  ],
+  "$defs": {
+    "operationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "request": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "queryMethod": {
+      "type": "string",
+      "enum": [
+        "dashboardGet", "skillList", "skillGet", "skillValidate", "skillDiff",
+        "mindmapList", "mindmapGet", "scenarioList", "scenarioGet", "excelRuleGet", "excelRuleRegression",
+        "evaluationList", "evaluationGet", "evaluationStatus", "evaluationCaseGet", "evaluationMetrics", "evaluationOptimize", "evaluationSuggestions", "jobGet",
+        "releaseCheck", "releaseList", "releaseGet", "runtimeStatus", "traceList", "traceGet",
+        "traceRetentionPreview", "settingsGet", "settingsHealth", "settingsAudit", "settingsAuditExport"
+      ]
+    },
+    "mutationMethod": {
+      "type": "string",
+      "enum": [
+        "skillCreate", "skillImport", "skillCopy", "skillSave", "skillArchive", "skillDelete",
+        "mindmapCreate", "mindmapImport", "mindmapUpdate", "mindmapGenerateCandidate", "mindmapApplyCandidate",
+        "scenarioCreate", "scenarioUpdate", "scenarioSave", "scenarioAttachSkill", "scenarioRemoveSkill", "scenarioAddSample",
+        "excelRuleGenerate", "excelRuleUploadSample", "excelRuleAnalyze", "excelRuleApplyDraft", "excelRuleConfirm", "excelRulePublish",
+        "evaluationCreate", "evaluationRun", "evaluationStart", "evaluationCancel", "evaluationRerunFailed", "evaluationAnnotate", "evaluationApplySuggestion",
+        "releasePublish", "releaseRollback", "traceProtect", "traceRetain", "traceClear", "traceCleanup",
+        "settingsSave", "settingsUpdate", "settingsBackup", "settingsRestore"
+      ]
+    },
+    "queryEnvelope": {
+      "type": "object",
+      "required": ["method"],
+      "properties": {
+        "method": { "$ref": "#/$defs/queryMethod" },
+        "request": { "$ref": "#/$defs/request" },
+        "identifier": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": false
+    },
+    "mutationEnvelope": {
+      "type": "object",
+      "required": ["method", "operationId", "request"],
+      "properties": {
+        "method": { "$ref": "#/$defs/mutationMethod" },
+        "operationId": { "$ref": "#/$defs/operationId" },
+        "request": { "$ref": "#/$defs/request" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

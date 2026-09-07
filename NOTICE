@@ -1,0 +1,3 @@
+Skill Manager plugin bundles React-compatible Browser code and uses the
+Harness-provided React runtime. Third-party license notices are resolved by
+the host Harness distribution; this file records the plugin boundary.

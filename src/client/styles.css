@@ -1,0 +1,3 @@
+/* Runtime styles are kept in the scoped CLIENT_CSS string in index.tsx so the
+   Harness lazy-CJS factory can remove them synchronously during teardown. This
+   file is intentionally present for Vite's CSS graph and local editor tooling. */
