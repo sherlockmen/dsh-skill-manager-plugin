@@ -17,7 +17,7 @@
 !/vitest.config.ts
 !/NOTICE
 
-# Documentation remains local, including any nested documentation.
+# Internal documentation remains local, except public files listed below.
 *.md
 *.mdx
 *.rst
@@ -42,3 +42,15 @@ node_modules/
 lib/
 dist/
 coverage/
+
+# Public project overview, license, and reviewed application screenshots.
+!/README.md
+!/LICENSE
+!/docs/
+/docs/*
+!/docs/images/
+/docs/images/*
+!/docs/images/dashboard.jpg
+!/docs/images/skill-editor.jpg
+!/docs/images/trace-overview.jpg
+!/docs/images/trace-inspector.jpg
